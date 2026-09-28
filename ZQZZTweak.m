@@ -178,10 +178,12 @@ static BOOL build_injected_main(void) {
     NSString *probe  = doc_path(@"zqzz_js_probe.txt");
     NSString *jlog   = doc_path(@"zqzz_js.log");
     NSString *proto  = doc_path(@"zqzz_proto.txt");
+    NSString *cfg    = doc_path(@"zqzz_cfg.txt");
     inject = [inject stringByReplacingOccurrencesOfString:@"@@FLAGS_PATH@@" withString:flags];
     inject = [inject stringByReplacingOccurrencesOfString:@"@@PROBE_PATH@@" withString:probe];
     inject = [inject stringByReplacingOccurrencesOfString:@"@@LOG_PATH@@" withString:jlog];
     inject = [inject stringByReplacingOccurrencesOfString:@"@@PROTO_PATH@@" withString:proto];
+    inject = [inject stringByReplacingOccurrencesOfString:@"@@CFG_PATH@@" withString:cfg];
 
     NSMutableData *out = [NSMutableData dataWithData:raw];
     [out appendData:[@"\n\n/* ---- ZQZZ injected ---- */\n" dataUsingEncoding:NSUTF8StringEncoding]];
@@ -267,7 +269,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 312;
+        CGFloat w = 268, h = 348;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -342,6 +344,17 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [g_segAtk addTarget:self action:@selector(onAtk) forControlEvents:UIControlEventValueChanged];
         [g_panel addSubview:g_segAtk];
 
+        // 导出配置表（把全部策划数值表 dump 到 Documents/zqzz_cfg.txt）
+        UIButton *cfgBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        cfgBtn.frame = CGRectMake(14, 248, w - 28, 36);
+        cfgBtn.backgroundColor = [UIColor colorWithRed:0.18 green:0.45 blue:0.78 alpha:1];
+        cfgBtn.layer.cornerRadius = 9;
+        [cfgBtn setTitle:@"导出配置表（策划数值）" forState:UIControlStateNormal];
+        [cfgBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        cfgBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [cfgBtn addTarget:self action:@selector(onDumpCfg) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:cfgBtn];
+
         UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
         [g_panel addGestureRecognizer:pp];
     }
@@ -371,6 +384,24 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     g_spd = kSpdVals[i];
     sync_flags();
     mlog(@"spd=%d (timeScale)", g_spd);
+}
+- (void)onDumpCfg {
+    // 触发 JS 侧把 configData 的全部表名/规模导出到 Documents/zqzz_cfg.txt
+    NSString *p = doc_path(@"zqzz_flags.json");
+    NSString *json = [NSString stringWithFormat:
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgDump\":1}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul];
+    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    mlog(@"cfgDump=1 sent");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ sync_flags(); });
+    // 提示
+    UIAlertController *al = [UIAlertController alertControllerWithTitle:@"导出配置表"
+        message:@"已导出到 Documents/zqzz_cfg.txt\n\n如需指定表内容，请在 zqzz_flags.json 里加：\n\"cfgDump\": \"npc_tank,tank_base\""
+        preferredStyle:UIAlertControllerStyleAlert];
+    [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    UIViewController *vc = g_win.rootViewController;
+    if (vc) [vc presentViewController:al animated:YES completion:nil];
 }
 - (void)onAtk {
     NSInteger i = g_segAtk.selectedSegmentIndex;
