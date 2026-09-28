@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, lastDmg: "",
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", passReq: 0, passCnt: 0, passPrev: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -59,6 +59,7 @@
      - skip : 最近一次 loadMission 的 isSkipMode
   */
   var D = window.__ZQZZ_D__ = { sim: 0, rpl: 0, mtype: -1, skip: 0, simFrames: 0, rplFrames: 0, proto: [] };
+  var g_passMissionId = -1;   // 一键通关用的当前关卡 id（由 loadMission 抓取）
   S.diag = "";
 
   function fs() { try { return jsb.fileUtils; } catch (e) { return null; } }
@@ -71,12 +72,12 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v7 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v9 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
-            " atkMul=" + S.atkMul + " kh2=" + S.kh2 +
+            " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + " pc=" + S.passCnt +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -98,6 +99,10 @@
       /* atkMul = 攻击倍率（1=关；2/5/10/100 等），未知值安全回退 1 */
       var am = Number(j.atkMul);
       S.atkMul = (am > 1 && am <= 1000) ? am : 1;
+      /* pass: 一键通关触发（边沿检测：仅 0→1 时执行一次，避免 flags 常驻导致重复发） */
+      var pv = j.pass ? 1 : 0;
+      if (pv === 1 && S.passPrev === 0) S.passReq = 1;
+      S.passPrev = pv;
     } catch (e) {}
   }
 
@@ -405,21 +410,32 @@
             }
             return;
           }
-          /* ---- 倍攻：敌方血量下降按倍率放大（血量差分法） ----
-             ⚠️ hp 是绝对值（服务端下发），不是伤害量；故用 本次扣血 = 旧值 - 新值 计算后放大。
-             首次调用（构造时 monsterHp === undefined）是初始化，不能放大。 */
-          if (S.atkMul > 1 && !this.isMyselfAtk) {
-            var prev = this.monsterHp;
-            if (typeof prev === "number" && prev > 0 && typeof hp === "number" && hp < prev) {
-              var dmg = prev - hp;
-              var big = dmg * S.atkMul;
+          /* ---- 倍攻：按【已损失血量比例】放大（基准用 maxHp，固定不漂移） ----
+             ⚠️ 坑1：hp 是绝对值（服务端下发），不是伤害量，不能直接乘。
+             ⚠️ 坑2：若拿"上一帧血量"当基准，会随血量一起下滑而发散
+                     （例：100 放大成 50 后，服务端发 90 反而 >= 50，差分永久失效）。
+                     ⇒ 必须用固定的 this.maxHp 当基准。
+             ⚠️ 坑3：调用方 gameBattleMgr:719 是 `n.setMonsterHp(t.hp)` 只传 1 参，
+                     原函数死亡判定 `t <= 0 && e` 中 e 为 undefined ⇒ 永不死亡。下面补传 atkId。
+
+             算法：srvLost = 服务端已损失比例 → bigLost = srvLost * atkMul
+                   bigLost >= 1 即直接击杀（hp = 0，触发 setUnitDead） */
+          var raw = hp;
+          if (S.atkMul > 1 && !this.isMyselfAtk && typeof raw === "number") {
+            var max = this.maxHp || (this.monsterData && this.monsterData.setting && this.monsterData.setting.maxHp) || 0;
+            if (max > 0 && raw < max && raw >= 0) {
+              var srvLost = (max - raw) / max;
+              var bigLost = srvLost * S.atkMul;
+              var nh2 = bigLost >= 1 ? 0 : max * (1 - bigLost);
               S.kh2 = (S.kh2 || 0) + 1;
-              var nh = prev - big;
-              S.lastDmg = dmg + "x" + S.atkMul + "->" + big;
-              hp = nh < 0 ? 0 : nh;
+              S.lastDmg = max + "/" + raw + " lost" + (srvLost * 100).toFixed(1) + "%x" + S.atkMul;
+              hp = nh2;
+              if (hp <= 0) S.killHits2 = (S.killHits2 || 0) + 1;
             }
           }
         } catch (x) {}
+        /* 关键：补传 atkId（非 0 真值）让原函数的死亡判定 `t <= 0 && e` 成立 */
+        if (typeof atkId === "undefined" || !atkId) atkId = -1;
         return oSetHp.call(this, hp, atkId, force);
       };
       OM.prototype.setMonsterHp.__zq = 1;
@@ -591,6 +607,7 @@
         try {
           D.mtype = (t && t.type) || -1;
           D.id = (t && t.id) || -1;
+          if (D.id > 0) g_passMissionId = D.id;
         } catch (e) {}
         r = oL.call(this, t);
         try { D.skip = this.isSkipMode ? 1 : 0; } catch (e) {}
@@ -617,13 +634,59 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v7 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v9 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
     };
     EM.prototype.receiveEL.__zqp = 1;
     log("diag: EMgr.receiveEL hooked (全协议探针)");
+  }
+
+  /* ---------- 一键通关 ----------
+     原理（逆向实证）：pveBattleMgr.sendMissionFightEnd(isSuc, type) 中
+       result: isSuc ? suc : fail → sendNetMsg(C2S_PlayerFb_Fight = 2401, o)
+       o = { missionId, result, resultType, tankIds, wave, killPos, speed }
+     ⇒ 胜负由【客户端上报】。pveBattleMgr 是场景组件（无静态单例），
+        故优先用实例方法，拿不到就直接自己组包发 2401。
+
+     ⚠️⚠️ 高风险：服务端可能校验战斗时长/击杀/波次（wave / killPos 本应来自真实战报）。
+        未实际战斗直接上报可能被判异常（无效 / 风控）。默认关闭，仅用户显式点击时执行一次。 */
+  function forcePass() {
+    var m = req("pveBattleMgr");
+    var C = ctor(m, "pveBattleMgr");
+    var inst = C && (C.I || (typeof C.getInstance === "function" ? C.getInstance() : null));
+    if (inst && typeof inst.sendMissionFightEnd === "function") {
+      try {
+        inst.sendMissionFightEnd(true, 0);
+        S.note = "pass:inst(mid=" + inst.missionId + ")";
+        log("forcePass via instance mid=" + inst.missionId);
+        return true;
+      } catch (e) {}
+    }
+    var smI = singleton(req("SocketMgr"), "SocketMgr");
+    var nc = table(req("mainNetCode"), "mainNetCode");
+    if (!(smI && nc && nc.C2S_PlayerFb_Fight)) { S.note = "pass:no-socket"; return false; }
+    try {
+      var tanks = "";
+      try {
+        var MT = (req("ModelTroops") || {}).default;
+        if (MT && MT.I && typeof MT.I.getPveTroop === "function") {
+          var tr = MT.I.getPveTroop(1);
+          if (tr && tr.troop) for (var k in tr.troop) tanks += tr.troop[k] + ",";
+        }
+      } catch (e2) {}
+      var o = {
+        missionId: (g_passMissionId > 0 ? g_passMissionId : 0),
+        result: 1, resultType: 0, tankIds: tanks,
+        wave: 1, killPos: "", speed: 0
+      };
+      smI.sendNetMsg(nc.C2S_PlayerFb_Fight, o);
+      S.note = "pass:sent mid=" + o.missionId;
+      log("forcePass -> C2S_PlayerFb_Fight(2401) " + JSON.stringify(o));
+      return true;
+    } catch (e3) { S.note = "pass-err:" + e3; }
+    return false;
   }
 
   function tick() {
@@ -638,6 +701,7 @@
       hookDiag();
       hookProto();
       applySpeed();
+      if (S.passReq) { S.passReq = 0; S.passCnt++; forcePass(); }
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
       }
