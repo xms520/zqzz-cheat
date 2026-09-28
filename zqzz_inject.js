@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, hpMine: 0, hpFoe: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -71,13 +71,13 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v14 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v15 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
             " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + 
-            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " cfgT=" + S.cfgTables +
+            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " cfgT=" + S.cfgTables + " cfgK=" + S.cfgKey +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -104,6 +104,8 @@
       /* 配置表：cfgDump=1 打表名清单；cfgDump="表A,表B" 打指定表内容；cfgSet={...} 改值 */
       if (typeof j.cfgDump !== "undefined") S.cfgDump = j.cfgDump;
       if (j.cfgSet && typeof j.cfgSet === "object") S.cfgSet = j.cfgSet;
+      if (typeof j.cfgFind !== "undefined") S.cfgFind = j.cfgFind;
+      if (typeof j.cfgFindTables !== "undefined") S.cfgFindTables = j.cfgFindTables;
     } catch (e) {}
   }
 
@@ -669,7 +671,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v14 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v15 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -689,9 +691,51 @@
        "cfgSet": {"表名#id#字段": 值}    → 运行时改值（如 {"ad_reward#1#max_count": 999}） */
   var CFG = "@@CFG_PATH@@";
 
+  /* 关键表清单（客户端读取、体量适中、价值高） */
+  var CFG_KEY = ["common_value", "tank_base", "ad_reward", "money_type",
+                 "function_unlock", "drop_base", "item_base", "player_level",
+                 "mission_type", "oil_cost", "setting", "ad_shop_box"];
+
   function cfgWrite(name, text) {
     var f = fs(); if (!f) return;
     try { f.writeStringToFile(text, name); } catch (e) {}
+  }
+
+  /* cfgDump: "auto" → 导出关键表到 zqzz_cfg_key.json（合并单文件，便于上传）
+     cfgDump: "表A,表B" → 各表单独文件
+     cfgFind: "关键词" → 在关键表里搜字段名，输出命中项 */
+  function dumpKeyTables(cd) {
+    var out = {};
+    for (var i = 0; i < CFG_KEY.length; i++) {
+      var nm = CFG_KEY[i];
+      if (cd[nm]) out[nm] = cd[nm];
+    }
+    var p = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_key.json");
+    cfgWrite(p, JSON.stringify(out));
+    log("cfgKey dumped: " + Object.keys(out).length + " tables");
+    return Object.keys(out).join(",");
+  }
+
+  function findInTables(cd, kw) {
+    var res = [];
+    var keys = S.cfgFindTables ? S.cfgFindTables.split(",") : CFG_KEY;
+    for (var ti = 0; ti < keys.length; ti++) {
+      var tbl = cd[keys[ti].replace(/^\s+|\s+$/g, "")];
+      if (!tbl) continue;
+      for (var id in tbl) {
+        var row = tbl[id];
+        if (!row || typeof row !== "object") continue;
+        for (var f in row) {
+          if (f.toLowerCase().indexOf(kw.toLowerCase()) >= 0) {
+            res.push(keys[ti] + "#" + id + "#" + f + " = " + JSON.stringify(row[f]));
+          }
+        }
+      }
+    }
+    var p = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_find.txt");
+    cfgWrite(p, "keyword=" + kw + " hits=" + res.length + "\n" + res.slice(0, 500).join("\n"));
+    log("cfgFind " + kw + " -> " + res.length + " hits");
+    return res.length;
   }
 
   function hookCfg() {
@@ -711,20 +755,30 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v14 cfgTables=" + names.length + "\n" + names.join("\n"));
+          cfgWrite(CFG, "ver=v15 cfgTables=" + names.length + "\n" + names.join("\n"));
           log("cfg dumped: " + names.length + " tables");
           // 指定表内容 dump
           var want = S.cfgDump;
           if (typeof want === "string" && want.length) {
-            var arr = want.split(",");
-            for (var i = 0; i < arr.length; i++) {
-              var nm = arr[i].replace(/^\s+|\s+$/g, "");
-              if (!nm || !cd[nm]) continue;
-              var p = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_" + nm + ".json");
-              cfgWrite(p, JSON.stringify(cd[nm]));
-              log("cfg dumped table " + nm);
+            if (want === "auto" || want === "1" || want === "key") {
+              S.cfgKey = dumpKeyTables(cd);
+            } else if (want === "all") {
+              var pall = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_all.json");
+              cfgWrite(pall, JSON.stringify(cd));
+              log("cfg ALL dumped");
+            } else {
+              var arr = want.split(",");
+              for (var i = 0; i < arr.length; i++) {
+                var nm = arr[i].replace(/^\s+|\s+$/g, "");
+                if (!nm || !cd[nm]) continue;
+                var p = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_" + nm + ".json");
+                cfgWrite(p, JSON.stringify(cd[nm]));
+                log("cfg dumped table " + nm);
+              }
             }
           }
+          // 关键词搜索
+          if (S.cfgFind) findInTables(cd, S.cfgFind);
         } catch (e) {}
         return r;
       };
