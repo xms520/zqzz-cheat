@@ -269,7 +269,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 348;
+        CGFloat w = 268, h = 392;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -355,6 +355,17 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [cfgBtn addTarget:self action:@selector(onDumpCfg) forControlEvents:UIControlEventTouchUpInside];
         [g_panel addSubview:cfgBtn];
 
+        // 验证改表机制（改 common_value#5025 征收上限，可见即可证）
+        UIButton *cfgTest = [UIButton buttonWithType:UIButtonTypeSystem];
+        cfgTest.frame = CGRectMake(14, 290, w - 28, 34);
+        cfgTest.backgroundColor = [UIColor colorWithRed:0.62 green:0.32 blue:0.10 alpha:1];
+        cfgTest.layer.cornerRadius = 8;
+        [cfgTest setTitle:@"验证改表(征收上限→9999)" forState:UIControlStateNormal];
+        [cfgTest setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        cfgTest.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+        [cfgTest addTarget:self action:@selector(onCfgTest) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:cfgTest];
+
         UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
         [g_panel addGestureRecognizer:pp];
     }
@@ -384,6 +395,23 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     g_spd = kSpdVals[i];
     sync_flags();
     mlog(@"spd=%d (timeScale)", g_spd);
+}
+- (void)onCfgTest {
+    // 改 common_value[5025].value = 9999（【新征收】最大累计时间 960 分钟 → 9999 分钟）
+    NSString *p = doc_path(@"zqzz_flags.json");
+    NSString *json = [NSString stringWithFormat:
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgSet\":{\"common_value#5025#value\":9999}}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul];
+    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    mlog(@"cfgSet 5025 sent");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ sync_flags(); });
+    UIAlertController *al = [UIAlertController alertControllerWithTitle:@"验证改表"
+        message:@"已写入 cfgSet: common_value#5025#value = 9999\n\n请打开【征收】界面查看：\n「最大累计时间」应从 16 小时变为 166 小时\n\n查看 Documents/zqzz_js_probe.txt 的 note 字段：\n• cfgOK:... 改表成功\n• cfgBAD:... 失败（会附原因）"
+        preferredStyle:UIAlertControllerStyleAlert];
+    [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    UIViewController *vc = g_win.rootViewController;
+    if (vc) [vc presentViewController:al animated:YES completion:nil];
 }
 - (void)onDumpCfg {
     // 一键导出【关键表】到 Documents/zqzz_cfg_key.json（合并单文件，便于回传）
@@ -444,7 +472,12 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
                     g_kill ? @"开" : @"关", g_inv ? @"开" : @"关", g_noad ? @"开" : @"关"];
     NSString *sp = (g_spd > 1) ? [NSString stringWithFormat:@"%d倍速", g_spd] : @"原速";
     NSString *ak = (g_atkMul > 1) ? [NSString stringWithFormat:@"%d倍攻", g_atkMul] : @"原攻";
-    g_status.text = [NSString stringWithFormat:@"%@ · %@ · %@\n%@", sw, sp, ak, js];
+    NSString *cfg = @"";
+    NSRange cr = [probe rangeOfString:@"note=cfgOK:"];
+    if (cr.location != NSNotFound) cfg = @"\n改表:成功";
+    NSRange cr2 = [probe rangeOfString:@"note=cfgBAD:"];
+    if (cr2.location != NSNotFound) cfg = @"\n改表:失败";
+    g_status.text = [NSString stringWithFormat:@"%@ · %@ · %@%@\n%@", sw, sp, ak, cfg, js];
 }
 @end
 
