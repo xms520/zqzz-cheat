@@ -386,18 +386,17 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     mlog(@"spd=%d (timeScale)", g_spd);
 }
 - (void)onDumpCfg {
-    // 触发 JS 侧把 configData 的全部表名/规模导出到 Documents/zqzz_cfg.txt
+    // 一键导出【关键表】到 Documents/zqzz_cfg_key.json（合并单文件，便于回传）
     NSString *p = doc_path(@"zqzz_flags.json");
     NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgDump\":1}",
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgDump\":\"auto\"}",
         g_kill, g_inv, g_noad, g_spd, g_atkMul];
     [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    mlog(@"cfgDump=1 sent");
+    mlog(@"cfgDump=auto sent");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ sync_flags(); });
-    // 提示
     UIAlertController *al = [UIAlertController alertControllerWithTitle:@"导出配置表"
-        message:@"已导出到 Documents/zqzz_cfg.txt\n\n如需指定表内容，请在 zqzz_flags.json 里加：\n\"cfgDump\": \"npc_tank,tank_base\""
+        message:@"关键表已导出到 Documents/zqzz_cfg_key.json\n\n进阶用法（改 zqzz_flags.json）：\n• \"cfgDump\": \"all\" 导出全部924表\n• \"cfgDump\": \"mission,npc_tank\" 指定表\n• \"cfgFind\": \"atk\" 关键词搜字段\n• \"cfgSet\": {\"ad_reward#1#max_count\":999} 改值"
         preferredStyle:UIAlertControllerStyleAlert];
     [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
     UIViewController *vc = g_win.rootViewController;
