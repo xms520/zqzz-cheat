@@ -48,9 +48,18 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
+
+  /* 诊断：记录战斗驱动来源，用于区分"本地模拟"与"服务端战报回放"
+     - sim : BattleLogic.frameUpdate 被调用的次数（本地模拟在跑）
+     - rpl : pveBattleMgr.frameUpdate 被调用的次数（服务端战报回放在跑）
+     - mtype: 最近一次 ConfigReader.loadMission 的 missionType
+     - skip : 最近一次 loadMission 的 isSkipMode
+  */
+  var D = window.__ZQZZ_D__ = { sim: 0, rpl: 0, mtype: -1, skip: 0, simFrames: 0, rplFrames: 0 };
+  S.diag = "";
 
   function fs() { try { return jsb.fileUtils; } catch (e) { return null; } }
 
@@ -65,7 +74,9 @@
     var t = "ver=v1 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
-            " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " kh=" + S.killHits + " ib=" + S.invBlocks +
+            " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
+            " kh=" + S.killHits + " ib=" + S.invBlocks +
+            " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " wr=" + S.writable + " seen=" + S.seen + " note=" + S.note;
     try { f.writeStringToFile(t, PROBE); } catch (e) {}
   }
@@ -127,8 +138,8 @@
   }
 
   function hookBattle() {
-    var hpMod = req("HpEngine"), unitMod = req("Unit");
-    var Hp = hpMod && hpMod.HpEngine, Unit = unitMod && unitMod.Unit;
+    var hpMod = req("HpEngine"), unitMod = req("Unit"), ugMod = req("UnitGroup");
+    var Hp = hpMod && hpMod.HpEngine, Unit = unitMod && unitMod.Unit, UG = ugMod && ugMod.UnitGroup;
     if (!Hp || !Hp.prototype || !Unit || !Unit.prototype) return;
 
     if (!(Hp.prototype.reduceHp && Hp.prototype.reduceHp.__zq === 1)) {
@@ -192,6 +203,96 @@
       Unit.prototype.doUnitDeath.__zq = 1;
       S.unit = 1;
     } else { S.unit = 1; }
+
+    /* ---------- UnitGroup 级（覆盖服务端战报回放 / 直接改血路径） ----------
+       副本(pveBattleMgr)不走 HpEngine.reduceHp，而是：
+         - resetUnitGroupHp: 直接 a.initHp = Math.min(a.initHp, e)  → 绕过伤害系统
+         - UnitGroup.tankAllDeath / checkEndUnit: setInitHp(0)     → 直接置零
+       故在 UnitGroup 上补一层"我方不死"兜底。 */
+    if (UG && UG.prototype) {
+      if (!(UG.prototype.isAllDead && UG.prototype.isAllDead.__zq === 1)) {
+        var oAllDead = UG.prototype.isAllDead;
+        UG.prototype.isAllDead = function () {
+          try { if (S.inv && this.isMyGroup) return false; } catch (x) {}
+          return oAllDead.call(this);
+        };
+        UG.prototype.isAllDead.__zq = 1;
+      }
+      if (!(UG.prototype.tankAllDeath && UG.prototype.tankAllDeath.__zq === 1)) {
+        var oTankAll = UG.prototype.tankAllDeath;
+        UG.prototype.tankAllDeath = function (t) {
+          try { if (S.inv && this.isMyGroup) return; } catch (x) {}
+          return oTankAll.call(this, t);
+        };
+        UG.prototype.tankAllDeath.__zq = 1;
+      }
+      if (!(UG.prototype.getLifeUnit && UG.prototype.getLifeUnit.__zq === 1)) {
+        var oLife = UG.prototype.getLifeUnit;
+        UG.prototype.getLifeUnit = function () {
+          /* 无敌时：我方始终至少返回"未死亡"的单位集合，避免 isDeath 被战报改写影响判定 */
+          var r = oLife.call(this);
+          try {
+            if (S.inv && this.isMyGroup && r.length === 0 && this.units && this.units.length > 0) return this.units.slice();
+          } catch (x) {}
+          return r;
+        };
+        UG.prototype.getLifeUnit.__zq = 1;
+      }
+    }
+  }
+
+  /* ---------- 战报回放路径（副本）：拦截服务端下发的我方血量 ----------
+     pveBattleMgr.frameUpdate 每帧对 Hurt/RecoverHp/Revive 事件调
+       resetUnitGroupHp(p.id, p.hp)
+     内部：a.initHp = Math.min(a.initHp, e)   ← 绕过伤害系统直接改血
+     单位 id 规则：id < 10 → 我方(atk)，否则敌方(def)（见其 setGroupUnit/resetUnitDead）
+     无敌开启时：我方血量一律不改（保持满血）。
+     秒杀开启时：不处理（副本胜负由服务端战报决定，改血不影响结果，见文件尾说明）。 */
+  function hookReport() {
+    var keys = ["pveBattleMgr", "pvpBattleMgr", "gameBattleMgr", "skillBattleMgr", "pveVioFightMgr"];
+    var n = 0;
+    for (var i = 0; i < keys.length; i++) {
+      var m = req(keys[i]);
+      var C = m && m.default;
+      if (!C || !C.prototype) continue;
+
+      if (C.prototype.resetUnitGroupHp && C.prototype.resetUnitGroupHp.__zq !== 1) {
+        var oRst = C.prototype.resetUnitGroupHp;
+        C.prototype.resetUnitGroupHp = function (id, hp) {
+          D.rpl++;
+          try { if (S.inv && id < 10) return; } catch (x) {}
+          return oRst.call(this, id, hp);
+        };
+        C.prototype.resetUnitGroupHp.__zq = 1;
+        log("report hook " + keys[i] + ".resetUnitGroupHp");
+        n++;
+      } else if (C.prototype.resetUnitGroupHp) { n++; }
+      if (C.prototype.setGroupUnit && C.prototype.setGroupUnit.__zq !== 1) {
+        var oSet = C.prototype.setGroupUnit;
+        C.prototype.setGroupUnit = function (t) {
+          var r = oSet.call(this, t);
+          try {
+            if (S.inv && this.groupUnit && this.groupUnit.atk && this.groupUnit.atk.units) {
+              var mine = this.groupUnit.atk.units;
+              for (var k in mine) {
+                var u = mine[k];
+                if (u && u.setting) {
+                  var mx = u.setting.maxHp || u.setting.initHp || 0;
+                  if (mx > 0) {
+                    u.setting.initHp = mx;
+                    if (u.hpEngine) u.hpEngine.hp = mx;
+                  }
+                }
+              }
+            }
+          } catch (e2) {}
+          return r;
+        };
+        C.prototype.setGroupUnit.__zq = 1;
+        n++;
+      } else if (C.prototype.setGroupUnit) { n++; }
+    }
+    if (n > S.rplHook) S.rplHook = n;
   }
 
   /* ---------- 免广告 ----------
@@ -322,6 +423,40 @@
     } catch (e) { S.note = "speed-err:" + e; }
   }
 
+  /* ---------- 诊断：区分本地模拟 / 服务端战报回放 ---------- */
+  function hookDiag() {
+    var BLm = req("BattleLogic");
+    var BL = BLm && BLm.BattleLogic;
+    if (BL && BL.prototype && BL.prototype.frameUpdate && BL.prototype.frameUpdate.__zqd !== 1) {
+      var oB = BL.prototype.frameUpdate;
+      BL.prototype.frameUpdate = function (t) {
+        D.sim++; D.simFrames = (D.simFrames + 1) % 1e6;
+        return oB.call(this, t);
+      };
+      BL.prototype.frameUpdate.__zqd = 1;
+      log("diag: BattleLogic.frameUpdate hooked (本地模拟)");
+    } else if (BL && BL.prototype) { D.sim = D.sim || 0; }
+
+    var CRm = req("ConfigReader");
+    var CR = CRm && CRm.ConfigReader;
+    if (CR && CR.prototype && CR.prototype.loadMission && CR.prototype.loadMission.__zqd !== 1) {
+      var oL = CR.prototype.loadMission;
+      CR.prototype.loadMission = function (t) {
+        var r;
+        try {
+          D.mtype = (t && t.type) || -1;
+          D.id = (t && t.id) || -1;
+        } catch (e) {}
+        r = oL.call(this, t);
+        try { D.skip = this.isSkipMode ? 1 : 0; } catch (e) {}
+        log("loadMission type=" + D.mtype + " id=" + D.id + " isSkipMode=" + D.skip);
+        return r;
+      };
+      CR.prototype.loadMission.__zqd = 1;
+      log("diag: ConfigReader.loadMission hooked");
+    }
+  }
+
   function tick() {
     try {
       var f = fs();
@@ -329,6 +464,8 @@
       readFlags();
       hookBattle();
       hookAd();
+      hookReport();
+      hookDiag();
       applySpeed();
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
