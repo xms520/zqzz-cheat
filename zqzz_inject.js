@@ -71,7 +71,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v1 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v4 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -273,16 +273,33 @@
     }
   }
 
-  /* ---------- 战报回放路径（副本）：拦截服务端下发的我方血量 ----------
-     pveBattleMgr.frameUpdate 每帧对 Hurt/RecoverHp/Revive 事件调
-       resetUnitGroupHp(p.id, p.hp)
-     内部：a.initHp = Math.min(a.initHp, e)   ← 绕过伤害系统直接改血
-     单位 id 规则：id < 10 → 我方(atk)，否则敌方(def)（见其 setGroupUnit/resetUnitDead）
-     无敌开启时：我方血量一律不改（保持满血）。
-     秒杀开启时：不处理（副本胜负由服务端战报决定，改血不影响结果，见文件尾说明）。 */
+  /* ---------- 战报回放路径（副本/PVP）：拦截服务端下发的血量 ----------
+     ⚠️ 实测：副本走的是【pvpBattleMgr】而非 pveBattleMgr！证据：
+       - pvpBattleMgr 处理 S2C_Player_FieldBoss_Fight / S2C_FightMine_XGDJ /
+         S2C_KFArena_Fight / S2C_KFTianTi_Fight / S2C_GuildClash 等
+       - msgReceiveLevelFight → 收集 warResults → fightFrameInfo
+       - frameUpdate 按 warReport.frameList 逐帧推进
+       - **initUnitHp(startFrame, warResult) 中 `v.setting.initHp = s[v.id]`** ← 血量真正落点
+     （pveBattleMgr 虽也有 resetUnitGroupHp，但副本不走它，真机 rpl=0 已证实）
+     单位归属：warResults[0].atk = 我方，def = 敌方。 */
   function hookReport() {
     var keys = ["pveBattleMgr", "pvpBattleMgr", "gameBattleMgr", "skillBattleMgr", "pveVioFightMgr"];
     var n = 0;
+
+    /* 把某侧 units 血量顶回满血（用于无敌） */
+    function refill(units) {
+      for (var k in units) {
+        var u = units[k];
+        if (u && u.setting) {
+          var mx = u.setting.maxHp || u.setting.initHp || 0;
+          if (mx > 0) {
+            u.setting.initHp = mx;
+            if (u.hpEngine) u.hpEngine.hp = mx;
+          }
+        }
+      }
+    }
+
     for (var i = 0; i < keys.length; i++) {
       var m = req(keys[i]);
       var C = ctor(m, keys[i]);
@@ -299,30 +316,56 @@
         log("report hook " + keys[i] + ".resetUnitGroupHp");
         n++;
       } else if (C.prototype.resetUnitGroupHp) { n++; }
+
       if (C.prototype.setGroupUnit && C.prototype.setGroupUnit.__zq !== 1) {
         var oSet = C.prototype.setGroupUnit;
         C.prototype.setGroupUnit = function (t) {
           var r = oSet.call(this, t);
           try {
-            if (S.inv && this.groupUnit && this.groupUnit.atk && this.groupUnit.atk.units) {
-              var mine = this.groupUnit.atk.units;
-              for (var k in mine) {
-                var u = mine[k];
-                if (u && u.setting) {
-                  var mx = u.setting.maxHp || u.setting.initHp || 0;
-                  if (mx > 0) {
-                    u.setting.initHp = mx;
-                    if (u.hpEngine) u.hpEngine.hp = mx;
-                  }
-                }
-              }
-            }
+            if (S.inv && this.groupUnit && this.groupUnit.atk && this.groupUnit.atk.units)
+              refill(this.groupUnit.atk.units);
           } catch (e2) {}
           return r;
         };
         C.prototype.setGroupUnit.__zq = 1;
         n++;
       } else if (C.prototype.setGroupUnit) { n++; }
+
+      /* ★ 副本/PVP 真正的血量落点：initUnitHp(startFrame, warResult) */
+      if (C.prototype.initUnitHp && C.prototype.initUnitHp.__zq !== 1) {
+        var oInit = C.prototype.initUnitHp;
+        C.prototype.initUnitHp = function (t) {
+          D.rpl++;
+          var r = oInit.call(this, t);
+          try {
+            var o = t && t.warResult;
+            if (S.inv && o && o.atk && o.atk.units) refill(o.atk.units);
+          } catch (e3) {}
+          return r;
+        };
+        C.prototype.initUnitHp.__zq = 1;
+        log("report hook " + keys[i] + ".initUnitHp ★副本血量落点");
+        n++;
+      } else if (C.prototype.initUnitHp) { n++; }
+
+      /* 战报接收：一收到就把我方血量顶满 */
+      if (C.prototype.msgReceiveLevelFight && C.prototype.msgReceiveLevelFight.__zq !== 1) {
+        var oRecv = C.prototype.msgReceiveLevelFight;
+        C.prototype.msgReceiveLevelFight = function (t) {
+          var r = oRecv.call(this, t);
+          try {
+            var o = t && t.warResult, ws = o && o.warResults;
+            if (S.inv && ws) for (var k = 0; k < ws.length; k++) {
+              var w = ws[k];
+              if (w && w.atk && w.atk.units) refill(w.atk.units);
+            }
+          } catch (e4) {}
+          return r;
+        };
+        C.prototype.msgReceiveLevelFight.__zq = 1;
+        log("report hook " + keys[i] + ".msgReceiveLevelFight");
+        n++;
+      } else if (C.prototype.msgReceiveLevelFight) { n++; }
     }
     if (n > S.rplHook) S.rplHook = n;
   }
