@@ -71,7 +71,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v17 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v18 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -671,7 +671,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v17 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v18 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -750,7 +750,7 @@
       names.push(k + "(" + n + ")");
     }
     S.cfgTables = names.length;
-    cfgWrite(CFG, "ver=v17 cfgTables=" + names.length + "\n" + names.join("\n"));
+    cfgWrite(CFG, "ver=v18 cfgTables=" + names.length + "\n" + names.join("\n"));
 
     var want = S.cfgDump;
     var done = "tables:" + names.length;
@@ -814,7 +814,7 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v17 cfgTables=" + names.length + "\n" + names.join("\n"));
+          cfgWrite(CFG, "ver=v18 cfgTables=" + names.length + "\n" + names.join("\n"));
         } catch (e) {}
         return r;
       };
