@@ -269,7 +269,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 392;
+        CGFloat w = 268, h = 470;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -355,9 +355,40 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [cfgBtn addTarget:self action:@selector(onDumpCfg) forControlEvents:UIControlEventTouchUpInside];
         [g_panel addSubview:cfgBtn];
 
+        // ---- 纯本地参数快捷开关（战斗内本地计算，即时可见）----
+        UIButton *b1 = [UIButton buttonWithType:UIButtonTypeSystem];
+        b1.frame = CGRectMake(14, 288, w - 28, 32);
+        b1.backgroundColor = [UIColor colorWithRed:0.15 green:0.50 blue:0.32 alpha:1];
+        b1.layer.cornerRadius = 8;
+        [b1 setTitle:@"杀敌回能量→999 (TankKillAddMp)" forState:UIControlStateNormal];
+        [b1 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        b1.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [b1 addTarget:self action:@selector(onKillMp) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:b1];
+
+        UIButton *b2 = [UIButton buttonWithType:UIButtonTypeSystem];
+        b2.frame = CGRectMake(14, 326, w - 28, 32);
+        b2.backgroundColor = [UIColor colorWithRed:0.15 green:0.50 blue:0.32 alpha:1];
+        b2.layer.cornerRadius = 8;
+        [b2 setTitle:@"座驾能量上限→99999" forState:UIControlStateNormal];
+        [b2 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        b2.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [b2 addTarget:self action:@selector(onHorseMp) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:b2];
+
+        UIButton *b3 = [UIButton buttonWithType:UIButtonTypeSystem];
+        b3.frame = CGRectMake(14, 364, w - 28, 32);
+        b3.backgroundColor = [UIColor colorWithRed:0.15 green:0.50 blue:0.32 alpha:1];
+        b3.layer.cornerRadius = 8;
+        [b3 setTitle:@"士气上限→9999 (MoraleTopMax)" forState:UIControlStateNormal];
+        [b3 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        b3.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [b3 addTarget:self action:@selector(onMorale) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:b3];
+
         // 验证改表机制（改 common_value#5025 征收上限，可见即可证）
         UIButton *cfgTest = [UIButton buttonWithType:UIButtonTypeSystem];
-        cfgTest.frame = CGRectMake(14, 290, w - 28, 34);
+        cfgTest.frame = CGRectMake(14, 402, w - 28, 34);
         cfgTest.backgroundColor = [UIColor colorWithRed:0.62 green:0.32 blue:0.10 alpha:1];
         cfgTest.layer.cornerRadius = 8;
         [cfgTest setTitle:@"验证改表(征收上限→9999)" forState:UIControlStateNormal];
@@ -395,6 +426,36 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     g_spd = kSpdVals[i];
     sync_flags();
     mlog(@"spd=%d (timeScale)", g_spd);
+}
+- (void)writeCfgSet:(NSString *)jsonTitle {
+    NSString *p = doc_path(@"zqzz_flags.json");
+    NSString *json = [NSString stringWithFormat:
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgSet\":%@}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul, jsonTitle];
+    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    mlog(@"cfgSet sent: %@", jsonTitle);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ sync_flags(); });
+}
+- (void)onKillMp {
+    [self writeCfgSet:@"{\"common_value#13#value\":999}"];
+    [self cfgTip:@"杀敌回能量 = 999\n\n主线战斗打死后，我方能量条应立即回满。"];
+}
+- (void)onHorseMp {
+    [self writeCfgSet:@"{\"common_value#59#value\":99999,\"common_value#61#value\":99999}"];
+    [self cfgTip:@"座驾能量 初始/上限 = 99999\n\n战斗内座驾技能能量条应为满（可连续放车技）。"];
+}
+- (void)onMorale {
+    [self writeCfgSet:@"{\"common_value#42#value\":9999}"];
+    [self cfgTip:@"士气上限 = 9999\n\n战斗内士气条上限变高（消耗战更持久）。"];
+}
+- (void)cfgTip:(NSString *)msg {
+    UIAlertController *al = [UIAlertController alertControllerWithTitle:@"已写入"
+        message:[msg stringByAppendingString:@"\n\n（进主线战斗观察；探针 note=cfgOK: 表示写入成功）"]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+    UIViewController *vc = g_win.rootViewController;
+    if (vc) [vc presentViewController:al animated:YES completion:nil];
 }
 - (void)onCfgTest {
     // 改 common_value[5025].value = 9999（【新征收】最大累计时间 960 分钟 → 9999 分钟）
