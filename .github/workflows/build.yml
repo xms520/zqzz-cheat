@@ -1,0 +1,95 @@
+name: build-zqzz-dylib
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'ZQZZTweak.m'
+      - 'zqzz_inject.js'
+      - 'gen.py'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate JS literal (with byte-exact selfcheck)
+        run: |
+          mkdir -p build
+          # gen.py 默认读写 /var/minis/shared/zqzz/src，这里用环境无关的本地实现
+          python3 - <<'PY'
+          import re, sys
+          js = open('zqzz_inject.js', encoding='utf-8').read()
+          def c_escape(s):
+              out = []
+              for ch in s:
+                  if ch == '\\': out.append('\\\\')
+                  elif ch == '"': out.append('\\"')
+                  elif ch == '\n': out.append('\\n')
+                  elif ch == '\r': out.append('\\r')
+                  elif ch == '\t': out.append('\\t')
+                  elif ord(ch) < 0x20: out.append('\\%03o' % ord(ch))
+                  else: out.append(ch)
+              return ''.join(out)
+          # 先分块再逐块转义（反序会劈开 \\ 或 \"，导致字符串提前闭合）
+          chunks = [js[i:i+1600] for i in range(0, len(js), 1600)]
+          body = '/* generated: do not edit */\nstatic const char *kZqzzJs =\n'
+          body += ''.join('    "%s"\n' % c_escape(c) for c in chunks)
+          body += ';\nconst char *zqzz_inject_js(void) { return kZqzzJs; }\n'
+          open('build/zqzz_js.c', 'w').write(body)
+          # 自校验
+          lits = re.findall(r'"((?:[^"\\]|\\.)*)"', body)
+          def unesc(s):
+              r = []; i = 0
+              while i < len(s):
+                  if s[i] == '\\':
+                      c = s[i+1]
+                      if c == 'n': r.append('\n'); i += 2
+                      elif c == 'r': r.append('\r'); i += 2
+                      elif c == 't': r.append('\t'); i += 2
+                      elif c == '\\': r.append('\\'); i += 2
+                      elif c == '"': r.append('"'); i += 2
+                      elif c.isdigit(): r.append(chr(int(s[i+1:i+4], 8))); i += 4
+                      else: r.append(c); i += 2
+                  else:
+                      r.append(s[i]); i += 1
+              return ''.join(r)
+          rec = ''.join(unesc(x) for x in lits)
+          print('SELFCHECK', 'CLEAN' if rec == js else 'FAIL')
+          sys.exit(0 if rec == js else 1)
+          PY
+
+      - name: Build dylib (arm64, no theos)
+        run: |
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK: $SDK"
+          CF="-arch arm64 -miphoneos-version-min=15.0 -isysroot $SDK -O2 -fobjc-arc -Wall"
+          xcrun -sdk iphoneos clang $CF -c -o /tmp/zqzz_js.o   build/zqzz_js.c
+          xcrun -sdk iphoneos clang $CF -c -o /tmp/zqzz_main.o ZQZZTweak.m
+          xcrun -sdk iphoneos clang $CF -c -o /tmp/fishhook.o  fishhook.c
+          xcrun -sdk iphoneos clang \
+            -arch arm64 -miphoneos-version-min=15.0 -isysroot $SDK \
+            -dynamiclib -fobjc-arc -O2 \
+            -install_name @executable_path/ZQZZTweak.dylib \
+            -framework Foundation -framework UIKit -framework QuartzCore -framework CoreGraphics \
+            -o ZQZZTweak.dylib /tmp/zqzz_main.o /tmp/zqzz_js.o /tmp/fishhook.o
+
+      - name: Verify
+        run: |
+          file ZQZZTweak.dylib
+          vtool -show-build ZQZZTweak.dylib || true
+          xcrun -sdk iphoneos nm -u ZQZZTweak.dylib | head -40
+          ls -la ZQZZTweak.dylib
+          md5 ZQZZTweak.dylib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZQZZTweak.dylib
+          path: |
+            ZQZZTweak.dylib
+            ZQZZTweak.m
+            zqzz_inject.js
+            control
