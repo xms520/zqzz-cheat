@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", passReq: 0, passCnt: 0, passPrev: 0, hpCalls: 0, hpMine: 0, hpFoe: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -59,7 +59,6 @@
      - skip : 最近一次 loadMission 的 isSkipMode
   */
   var D = window.__ZQZZ_D__ = { sim: 0, rpl: 0, mtype: -1, skip: 0, simFrames: 0, rplFrames: 0, proto: [] };
-  var g_passMissionId = -1;   // 一键通关用的当前关卡 id（由 loadMission 抓取）
   S.diag = "";
 
   function fs() { try { return jsb.fileUtils; } catch (e) { return null; } }
@@ -72,13 +71,13 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v12 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v13 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
-            " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + " pc=" + S.passCnt +
-            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe +
+            " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + 
+            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -100,10 +99,6 @@
       /* atkMul = 攻击倍率（1=关；2/5/10/100 等），未知值安全回退 1 */
       var am = Number(j.atkMul);
       S.atkMul = (am > 1 && am <= 1000) ? am : 1;
-      /* pass: 一键通关触发（边沿检测：仅 0→1 时执行一次，避免 flags 常驻导致重复发） */
-      var pv = j.pass ? 1 : 0;
-      if (pv === 1 && S.passPrev === 0) S.passReq = 1;
-      S.passPrev = pv;
     } catch (e) {}
   }
 
@@ -420,8 +415,14 @@
           /* ---- 秒杀/倍攻（敌方）----
              ⚠️ 服务端每帧回写血量，比例放大会被覆盖 ⇒ 必须一次性打到 0，
                 并主动调用 setUnitDead 让 isMonsterDead=true 永久锁定
-                （后续服务端再推血量会被原函数 `if (!this.isMonsterDead)` 早退忽略）。 */
-          if (!mine && typeof raw === "number") {
+                （后续服务端再推血量会被原函数 `if (!this.isMonsterDead)` 早退忽略）。
+
+             ⚠️⚠️ 副本不适用（实证）：副本/跨服战斗由服务端战报决定胜负，
+                客户端改血只会造成"看着消失了、实际还存在"的显示/逻辑错位
+                （ordMonster 是显示层、Unit 是逻辑层，服务端按自己的战报重建）。
+                ⇒ 仅对 LevelType.Common(1) 主线启用；其他战斗类型一律不干预。
+                如需放开全部，把 S.onlyMain 置 0（flags 里加 onlyMain:0）。 */
+          if (!mine && typeof raw === "number" && (!S.onlyMain || this.battleType === 1)) {
             var maxHp = this.maxHp ||
               (this.monsterData && this.monsterData.setting && this.monsterData.setting.maxHp) || 0;
             var lost = maxHp > 0 && raw < maxHp;   // 已发生掉血（构造初始化时 raw==maxHp，不触发）
@@ -637,7 +638,6 @@
         try {
           D.mtype = (t && t.type) || -1;
           D.id = (t && t.id) || -1;
-          if (D.id > 0) g_passMissionId = D.id;
         } catch (e) {}
         r = oL.call(this, t);
         try { D.skip = this.isSkipMode ? 1 : 0; } catch (e) {}
@@ -664,59 +664,13 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v12 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v13 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
     };
     EM.prototype.receiveEL.__zqp = 1;
     log("diag: EMgr.receiveEL hooked (全协议探针)");
-  }
-
-  /* ---------- 一键通关 ----------
-     原理（逆向实证）：pveBattleMgr.sendMissionFightEnd(isSuc, type) 中
-       result: isSuc ? suc : fail → sendNetMsg(C2S_PlayerFb_Fight = 2401, o)
-       o = { missionId, result, resultType, tankIds, wave, killPos, speed }
-     ⇒ 胜负由【客户端上报】。pveBattleMgr 是场景组件（无静态单例），
-        故优先用实例方法，拿不到就直接自己组包发 2401。
-
-     ⚠️⚠️ 高风险：服务端可能校验战斗时长/击杀/波次（wave / killPos 本应来自真实战报）。
-        未实际战斗直接上报可能被判异常（无效 / 风控）。默认关闭，仅用户显式点击时执行一次。 */
-  function forcePass() {
-    var m = req("pveBattleMgr");
-    var C = ctor(m, "pveBattleMgr");
-    var inst = C && (C.I || (typeof C.getInstance === "function" ? C.getInstance() : null));
-    if (inst && typeof inst.sendMissionFightEnd === "function") {
-      try {
-        inst.sendMissionFightEnd(true, 0);
-        S.note = "pass:inst(mid=" + inst.missionId + ")";
-        log("forcePass via instance mid=" + inst.missionId);
-        return true;
-      } catch (e) {}
-    }
-    var smI = singleton(req("SocketMgr"), "SocketMgr");
-    var nc = table(req("mainNetCode"), "mainNetCode");
-    if (!(smI && nc && nc.C2S_PlayerFb_Fight)) { S.note = "pass:no-socket"; return false; }
-    try {
-      var tanks = "";
-      try {
-        var MT = (req("ModelTroops") || {}).default;
-        if (MT && MT.I && typeof MT.I.getPveTroop === "function") {
-          var tr = MT.I.getPveTroop(1);
-          if (tr && tr.troop) for (var k in tr.troop) tanks += tr.troop[k] + ",";
-        }
-      } catch (e2) {}
-      var o = {
-        missionId: (g_passMissionId > 0 ? g_passMissionId : 0),
-        result: 1, resultType: 0, tankIds: tanks,
-        wave: 1, killPos: "", speed: 0
-      };
-      smI.sendNetMsg(nc.C2S_PlayerFb_Fight, o);
-      S.note = "pass:sent mid=" + o.missionId;
-      log("forcePass -> C2S_PlayerFb_Fight(2401) " + JSON.stringify(o));
-      return true;
-    } catch (e3) { S.note = "pass-err:" + e3; }
-    return false;
   }
 
   function tick() {
@@ -731,7 +685,6 @@
       hookDiag();
       hookProto();
       applySpeed();
-      if (S.passReq) { S.passReq = 0; S.passCnt++; forcePass(); }
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
       }
