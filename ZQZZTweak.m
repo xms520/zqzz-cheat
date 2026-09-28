@@ -138,11 +138,12 @@ static BOOL build_injected_main(void) {
 
 #pragma mark - 开关 + flags 同步
 
-static int g_kill = 0, g_inv = 0, g_noad = 0, g_spd = 1;
+static int g_kill = 0, g_inv = 0, g_noad = 0, g_spd = 1, g_atkMul = 1;
 
 static void sync_flags(void) {
     NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d}", g_kill, g_inv, g_noad, g_spd];
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul];
     NSString *p = doc_path(@"zqzz_flags.json");
     NSError *e = nil;
     [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:&e];
@@ -163,9 +164,11 @@ static UIView   *g_panel = nil;
 static UILabel  *g_status = nil;
 static UISwitch *g_swKill = nil, *g_swInv = nil, *g_swNoad = nil;
 static UISegmentedControl *g_segSpd = nil;
+static UISegmentedControl *g_segAtk = nil;
 static CGPoint   g_ballPos;
 
 static const int kSpdVals[4] = {1, 2, 3, 5};   // 与 JS 侧 SPD 数组必须一致
+static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=关）
 
 @interface ZQHelper : NSObject <UIGestureRecognizerDelegate>
 @end
@@ -190,7 +193,7 @@ static const int kSpdVals[4] = {1, 2, 3, 5};   // 与 JS 侧 SPD 数组必须一
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 274;
+        CGFloat w = 268, h = 312;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -229,7 +232,7 @@ static const int kSpdVals[4] = {1, 2, 3, 5};   // 与 JS 侧 SPD 数组必须一
             [s addTarget:self action:sels[i] forControlEvents:UIControlEventValueChanged];
             [g_panel addSubview:s];
         }
-        g_status = [[UILabel alloc] initWithFrame:CGRectMake(14, 216, w - 28, 52)];
+        g_status = [[UILabel alloc] initWithFrame:CGRectMake(14, 250, w - 28, 56)];
         g_status.numberOfLines = 4;
         g_status.font = [UIFont systemFontOfSize:10];
         g_status.textColor = [UIColor colorWithWhite:0.65 alpha:1];
@@ -249,6 +252,21 @@ static const int kSpdVals[4] = {1, 2, 3, 5};   // 与 JS 侧 SPD 数组必须一
         g_segSpd.tintColor = [UIColor colorWithWhite:1 alpha:0.25];
         [g_segSpd addTarget:self action:@selector(onSpd) forControlEvents:UIControlEventValueChanged];
         [g_panel addSubview:g_segSpd];
+
+        // 倍攻（血量差分放大，主线/副本通用）
+        UILabel *atkL = [[UILabel alloc] initWithFrame:CGRectMake(14, 210, 74, 26)];
+        atkL.text = @"倍攻";
+        atkL.textColor = [UIColor colorWithWhite:0.94 alpha:1];
+        atkL.font = [UIFont systemFontOfSize:14];
+        [g_panel addSubview:atkL];
+
+        g_segAtk = [[UISegmentedControl alloc] initWithItems:@[@"关", @"2x", @"5x", @"10x", @"100x"]];
+        g_segAtk.frame = CGRectMake(92, 210, w - 106, 28);
+        g_segAtk.selectedSegmentIndex = 0;
+        if (@available(iOS 13.0, *)) g_segAtk.selectedSegmentTintColor = [UIColor colorWithRed:0.85 green:0.30 blue:0.20 alpha:1];
+        g_segAtk.tintColor = [UIColor colorWithWhite:1 alpha:0.25];
+        [g_segAtk addTarget:self action:@selector(onAtk) forControlEvents:UIControlEventValueChanged];
+        [g_panel addSubview:g_segAtk];
 
         UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
         [g_panel addGestureRecognizer:pp];
@@ -280,16 +298,27 @@ static const int kSpdVals[4] = {1, 2, 3, 5};   // 与 JS 侧 SPD 数组必须一
     sync_flags();
     mlog(@"spd=%d (timeScale)", g_spd);
 }
+- (void)onAtk {
+    NSInteger i = g_segAtk.selectedSegmentIndex;
+    if (i < 0) i = 0;
+    if (i > 4) i = 4;
+    g_atkMul = kAtkVals[i];
+    sync_flags();
+    mlog(@"atkMul=%d", g_atkMul);
+}
 - (void)refreshSwitches {
     g_swKill.on = g_kill; g_swInv.on = g_inv; g_swNoad.on = g_noad;
     NSInteger idx = 0;
     for (int i = 0; i < 4; i++) if (kSpdVals[i] == g_spd) idx = i;
     g_segSpd.selectedSegmentIndex = idx;
+    NSInteger ai = 0;
+    for (int i = 0; i < 5; i++) if (kAtkVals[i] == g_atkMul) ai = i;
+    g_segAtk.selectedSegmentIndex = ai;
 }
 - (void)refreshStatus {
     NSString *probe = read_js_probe();
-    g_status.text = [NSString stringWithFormat:@"native kill=%d inv=%d noad=%d spd=%d\nJS %@",
-                     g_kill, g_inv, g_noad, g_spd,
+    g_status.text = [NSString stringWithFormat:@"native kill=%d inv=%d noad=%d spd=%d atk=%d\nJS %@",
+                     g_kill, g_inv, g_noad, g_spd, g_atkMul,
                      [probe length] > 150 ? [probe substringToIndex:150] : probe];
 }
 @end
