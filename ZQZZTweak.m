@@ -56,6 +56,64 @@ static void mlog(NSString *fmt, ...) {
     if (g_log) { fprintf(g_log, "[ZQZZ] %s\n", s.UTF8String); fflush(g_log); }
 }
 
+// 悬浮球内嵌头像（96x96 JPEG, base64, 4116 chars）
+static const char *kAvatarB64 =
+    "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"
+    "jnTGcZP/2Q==";
+
 #pragma mark - 路径
 
 static NSString *doc_path(NSString *name) {
@@ -156,6 +214,22 @@ static NSString *read_js_probe(void) {
     return s ?: @"(no probe yet)";
 }
 
+#pragma mark - 头像解码
+
+static UIImage *avatar_image(void) {
+    static UIImage *img = nil;
+    if (img) return img;
+    @try {
+        NSString *b64 = [NSString stringWithUTF8String:kAvatarB64];
+        b64 = [b64 stringByReplacingOccurrencesOfString:@"\n" withString:@""];
+        b64 = [b64 stringByReplacingOccurrencesOfString:@" " withString:@""];
+        NSData *d = [[NSData alloc] initWithBase64EncodedString:b64
+                                                        options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (d) img = [UIImage imageWithData:d];
+    } @catch (NSException *e) { img = nil; }
+    return img;
+}
+
 #pragma mark - UI
 
 static UIWindow *g_win = nil;
@@ -193,7 +267,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 356;
+        CGFloat w = 268, h = 312;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -203,7 +277,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         g_panel.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.14].CGColor;
 
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(14, 10, 200, 24)];
-        title.text = @"最强追逐 · 助手";
+        title.text = @"昆哥儿科技";
         title.textColor = [UIColor colorWithRed:1 green:0.78 blue:0.24 alpha:1];
         title.font = [UIFont boldSystemFontOfSize:16];
         [g_panel addSubview:title];
@@ -268,16 +342,6 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [g_segAtk addTarget:self action:@selector(onAtk) forControlEvents:UIControlEventValueChanged];
         [g_panel addSubview:g_segAtk];
 
-        UIButton *passBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        passBtn.frame = CGRectMake(14, 248, w - 28, 38);
-        passBtn.backgroundColor = [UIColor colorWithRed:0.72 green:0.22 blue:0.16 alpha:1];
-        passBtn.layer.cornerRadius = 9;
-        [passBtn setTitle:@"一键通关（上报胜利）" forState:UIControlStateNormal];
-        [passBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        passBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [passBtn addTarget:self action:@selector(onPass) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:passBtn];
-
         UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
         [g_panel addGestureRecognizer:pp];
     }
@@ -308,18 +372,6 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     sync_flags();
     mlog(@"spd=%d (timeScale)", g_spd);
 }
-- (void)onPass {
-    // 触发一次 JS 侧 forcePass()（写 flags 里的 pass=1，JS 执行后自行回落）
-    NSString *p = doc_path(@"zqzz_flags.json");
-    NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"pass\":1}",
-        g_kill, g_inv, g_noad, g_spd, g_atkMul];
-    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    mlog(@"pass=1 sent (once)");
-    // 稍后回落到 0，避免重复触发
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ sync_flags(); });
-}
 - (void)onAtk {
     NSInteger i = g_segAtk.selectedSegmentIndex;
     if (i < 0) i = 0;
@@ -338,10 +390,31 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     g_segAtk.selectedSegmentIndex = ai;
 }
 - (void)refreshStatus {
+    // 状态栏全中文：把 JS 探针的关键字段解析后转汉字显示
     NSString *probe = read_js_probe();
-    g_status.text = [NSString stringWithFormat:@"native kill=%d inv=%d noad=%d spd=%d atk=%d\nJS %@",
-                     g_kill, g_inv, g_noad, g_spd, g_atkMul,
-                     [probe length] > 150 ? [probe substringToIndex:150] : probe];
+    NSString *js = @"未就绪";
+    if ([probe length] > 0) {
+        NSDictionary *map = @{@"hp":@"血量挂点", @"unit":@"单位挂点", @"mad":@"广告挂点",
+                              @"sch":@"变速可用", @"kill":@"秒杀", @"inv":@"无敌"};
+        NSMutableArray *on = [NSMutableArray array];
+        for (NSString *k in map) {
+            NSString *pat = [NSString stringWithFormat:@"%@=1", k];
+            if ([probe rangeOfString:pat].location != NSNotFound) [on addObject:map[k]];
+        }
+        js = [on count] ? [on componentsJoinedByString:@"·"] : @"挂点未生效";
+        NSRange r = [probe rangeOfString:@"ver="];
+        if (r.location != NSNotFound) {
+            NSString *v = [probe substringFromIndex:r.location];
+            NSRange sp = [v rangeOfString:@" "];
+            if (sp.location != NSNotFound) v = [v substringToIndex:sp.location];
+            js = [NSString stringWithFormat:@"%@ | %@", v, js];
+        }
+    }
+    NSString *sw = [NSString stringWithFormat:@"秒杀%@ 无敌%@ 免广告%@",
+                    g_kill ? @"开" : @"关", g_inv ? @"开" : @"关", g_noad ? @"开" : @"关"];
+    NSString *sp = (g_spd > 1) ? [NSString stringWithFormat:@"%d倍速", g_spd] : @"原速";
+    NSString *ak = (g_atkMul > 1) ? [NSString stringWithFormat:@"%d倍攻", g_atkMul] : @"原攻";
+    g_status.text = [NSString stringWithFormat:@"%@ · %@ · %@\n%@", sw, sp, ak, js];
 }
 @end
 
@@ -401,17 +474,29 @@ static void ensure_overlay(void) {
         ring.mask = mask;
         [g_ball.layer addSublayer:ring];
 
-        UILabel *core = [[UILabel alloc] initWithFrame:CGRectMake(s/2 - s/2*0.82, s/2 - s/2*0.82,
-                                                                 s*0.82, s*0.82)];
-        core.text = @"改";
-        core.textAlignment = NSTextAlignmentCenter;
-        core.font = [UIFont boldSystemFontOfSize:20];
-        core.textColor = [UIColor whiteColor];
-        core.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.92];
-        core.layer.cornerRadius = s/2*0.82;
-        core.layer.masksToBounds = YES;
+        UIImage *av = avatar_image();
+        CGFloat inner = s/2*0.82;
+        UIView *core;
+        if (av) {
+            UIImageView *iv = [[UIImageView alloc] initWithFrame:CGRectMake(s/2 - inner, s/2 - inner, inner*2, inner*2)];
+            iv.image = av;
+            iv.contentMode = UIViewContentModeScaleAspectFill;
+            iv.layer.cornerRadius = inner;
+            iv.layer.masksToBounds = YES;
+            iv.backgroundColor = [UIColor clearColor];
+            core = iv;
+        } else {
+            UILabel *lb = [[UILabel alloc] initWithFrame:CGRectMake(s/2 - inner, s/2 - inner, inner*2, inner*2)];
+            lb.text = @"改";
+            lb.textAlignment = NSTextAlignmentCenter;
+            lb.font = [UIFont boldSystemFontOfSize:20];
+            lb.textColor = [UIColor whiteColor];
+            lb.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.92];
+            lb.layer.cornerRadius = inner;
+            lb.layer.masksToBounds = YES;
+            core = lb;
+        }
         [g_ball addSubview:core];
-
         [g_ball addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:g_helper action:@selector(ballTap:)]];
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:g_helper action:@selector(ballPan:)];
         [g_ball addGestureRecognizer:pan];
