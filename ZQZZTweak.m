@@ -349,7 +349,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         cfgBtn.frame = CGRectMake(14, 248, w - 28, 36);
         cfgBtn.backgroundColor = [UIColor colorWithRed:0.18 green:0.45 blue:0.78 alpha:1];
         cfgBtn.layer.cornerRadius = 9;
-        [cfgBtn setTitle:@"导出配置表（策划数值）" forState:UIControlStateNormal];
+        [cfgBtn setTitle:@"导出关键配置表(JSON)" forState:UIControlStateNormal];
         [cfgBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         cfgBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
         [cfgBtn addTarget:self action:@selector(onDumpCfg) forControlEvents:UIControlEventTouchUpInside];
@@ -396,7 +396,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ sync_flags(); });
     UIAlertController *al = [UIAlertController alertControllerWithTitle:@"导出配置表"
-        message:@"关键表已导出到 Documents/zqzz_cfg_key.json\n\n进阶用法（改 zqzz_flags.json）：\n• \"cfgDump\": \"all\" 导出全部924表\n• \"cfgDump\": \"mission,npc_tank\" 指定表\n• \"cfgFind\": \"atk\" 关键词搜字段\n• \"cfgSet\": {\"ad_reward#1#max_count\":999} 改值"
+        message:@"已写入 Documents/zqzz_cfg_key.json\n（若显示等待中，请先登录进游戏再点）\n\n进阶用法（改 zqzz_flags.json）：\n• \"cfgDump\": \"all\" 导出全部924表\n• \"cfgDump\": \"mission,npc_tank\" 指定表\n• \"cfgFind\": \"atk\" 关键词搜字段\n• \"cfgSet\": {\"ad_reward#1#max_count\":999} 改值"
         preferredStyle:UIAlertControllerStyleAlert];
     [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
     UIViewController *vc = g_win.rootViewController;
