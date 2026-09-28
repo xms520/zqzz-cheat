@@ -193,7 +193,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 312;
+        CGFloat w = 268, h = 356;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -232,7 +232,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
             [s addTarget:self action:sels[i] forControlEvents:UIControlEventValueChanged];
             [g_panel addSubview:s];
         }
-        g_status = [[UILabel alloc] initWithFrame:CGRectMake(14, 250, w - 28, 56)];
+        g_status = [[UILabel alloc] initWithFrame:CGRectMake(14, 294, w - 28, 56)];
         g_status.numberOfLines = 4;
         g_status.font = [UIFont systemFontOfSize:10];
         g_status.textColor = [UIColor colorWithWhite:0.65 alpha:1];
@@ -268,6 +268,16 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [g_segAtk addTarget:self action:@selector(onAtk) forControlEvents:UIControlEventValueChanged];
         [g_panel addSubview:g_segAtk];
 
+        UIButton *passBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        passBtn.frame = CGRectMake(14, 248, w - 28, 38);
+        passBtn.backgroundColor = [UIColor colorWithRed:0.72 green:0.22 blue:0.16 alpha:1];
+        passBtn.layer.cornerRadius = 9;
+        [passBtn setTitle:@"一键通关（上报胜利）" forState:UIControlStateNormal];
+        [passBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        passBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [passBtn addTarget:self action:@selector(onPass) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:passBtn];
+
         UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
         [g_panel addGestureRecognizer:pp];
     }
@@ -297,6 +307,18 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     g_spd = kSpdVals[i];
     sync_flags();
     mlog(@"spd=%d (timeScale)", g_spd);
+}
+- (void)onPass {
+    // 触发一次 JS 侧 forcePass()（写 flags 里的 pass=1，JS 执行后自行回落）
+    NSString *p = doc_path(@"zqzz_flags.json");
+    NSString *json = [NSString stringWithFormat:
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"pass\":1}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul];
+    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+    mlog(@"pass=1 sent (once)");
+    // 稍后回落到 0，避免重复触发
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ sync_flags(); });
 }
 - (void)onAtk {
     NSInteger i = g_segAtk.selectedSegmentIndex;
