@@ -1,0 +1,9 @@
+Package: com.kun.zqzzcheat
+Name: 最强追逐助手
+Version: 1.0
+Architecture: iphoneos-arm64
+Description: 最强追逐 1.0.6 (com.zqzz.zsios) 助手 — 秒杀 / 无敌 / 免广告
+  Cocos Creator 2.x + jsb(V8) 壳，注入 chain：
+  native fishhook 重定向 main.js 读取 → 尾部追加 JS → JS 侧包装 HpEngine 伤害结算与 ModelAD 广告入口
+Author: 昆哥儿科技
+Depiction: 一击秒杀敌方 / 我方免伤不死 / 广告直接领奖（延时 2.2s 规避客户端用时检测）
