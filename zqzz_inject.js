@@ -98,7 +98,14 @@
 
   /* ---------- 模块解析（带结果记录，便于真机取证） ----------
      ⚠️ 只在成功时缓存：bundle 是异步加载的（HpEngine 在 subscript bundle，
-     晚于 main.js 就绪），失败必须留待下一轮重试。 */
+     晚于 main.js 就绪），失败必须留待下一轮重试。
+     ⚠️⚠️ 模块导出有【两种形态】，必须都兼容（实测）：
+       具名：o.HpEngine = u / o.UnitGroup = m / o.BattleLogic = _ /
+             o.pveBattleMgr = k / o.pvpBattleMgr = S / o.gameBattleMgr = D /
+             o.ConfigReader = N / o.SettingManager = m / o.mainNetCode = n
+       默认：o.default = C（ModelAD / BuildUtil / iOSUtils / ADUtils / LYUtils /
+             SocketMgr / skillBattleMgr / pveVioFightMgr / chSDK …）
+     早期版本统一按 .default 取 → pveBattleMgr 等永远 undefined（补丁静默失效）。 */
   var mcache = {};
   function req(n) {
     if (mcache[n] !== undefined) return mcache[n];
@@ -108,12 +115,37 @@
     return r;
   }
 
+  /* 取模块内的"构造器/类"：优先同名具名导出，再回退 default */
+  function ctor(exports, name) {
+    if (!exports) return null;
+    if (name && typeof exports[name] === "function") return exports[name];
+    if (typeof exports.default === "function") return exports.default;
+    return null;
+  }
+
+  /* 取模块内的单例（形如 X.I） */
+  function singleton(exports, name) {
+    var C = ctor(exports, name);
+    if (C && C.I) return C.I;
+    if (exports && exports.I) return exports.I;
+    return null;
+  }
+
+  /* 取模块内的普通对象/表（mainNetCode 等） */
+  function table(exports, name) {
+    if (!exports) return null;
+    if (name && exports[name] && typeof exports[name] === "object") return exports[name];
+    if (exports.default && typeof exports.default === "object") return exports.default;
+    return null;
+  }
+
   var lastClaim = 0, pendingTimer = null;
 
   /* 直接发奖：⚠️ 客户端检测「广告用时必须 > 2 秒」，故延时 2.2s 再发请求 */
   function directReward(id, param, tag) {
-    var SM = req("SocketMgr"), NC = req("mainNetCode");
-    if (!(SM && SM.default && SM.default.I && NC && NC.mainNetCode)) {
+    var smI = singleton(req("SocketMgr"), "SocketMgr");
+    var nc = table(req("mainNetCode"), "mainNetCode");
+    if (!(smI && nc && nc.C2S_Player_AdReward)) {
       S.note = "ad:no-socket id=" + id; return false;
     }
     var o = param || {}; o.id = id;
@@ -122,7 +154,7 @@
     pendingTimer = setTimeout(function () {
       pendingTimer = null;
       try {
-        SM.default.I.sendNetMsg(NC.mainNetCode.C2S_Player_AdReward, o);
+        smI.sendNetMsg(nc.C2S_Player_AdReward, o);
         S.note = "ad:reward-sent " + tag + " id=" + id;
         log("ad " + tag + " id=" + id + " -> reward sent (no video)");
       } catch (e) { S.note = "ad:send-err:" + e; }
@@ -139,7 +171,7 @@
 
   function hookBattle() {
     var hpMod = req("HpEngine"), unitMod = req("Unit"), ugMod = req("UnitGroup");
-    var Hp = hpMod && hpMod.HpEngine, Unit = unitMod && unitMod.Unit, UG = ugMod && ugMod.UnitGroup;
+    var Hp = ctor(hpMod, "HpEngine"), Unit = ctor(unitMod, "Unit"), UG = ctor(ugMod, "UnitGroup");
     if (!Hp || !Hp.prototype || !Unit || !Unit.prototype) return;
 
     if (!(Hp.prototype.reduceHp && Hp.prototype.reduceHp.__zq === 1)) {
@@ -253,7 +285,7 @@
     var n = 0;
     for (var i = 0; i < keys.length; i++) {
       var m = req(keys[i]);
-      var C = m && m.default;
+      var C = ctor(m, keys[i]);
       if (!C || !C.prototype) continue;
 
       if (C.prototype.resetUnitGroupHp && C.prototype.resetUnitGroupHp.__zq !== 1) {
@@ -330,7 +362,7 @@
 
     /* 1) ModelAD —— 全 UI 统一入口（prototype！） */
     var MA = req("ModelAD");
-    var MAD = MA && MA.default;
+    var MAD = ctor(MA, "ModelAD");
     var MADp = MAD && MAD.prototype;
     if (MAD) {
       if (patchMethod(MAD, MADp, "watchAD", function (o) {
@@ -356,11 +388,11 @@
     }
 
     /* 2) BuildUtil 原型上的渠道开关（wxAd funcs 位） */
-    var BU = (req("BuildUtil") || {}).default;
+    var BU = ctor(req("BuildUtil"), "BuildUtil");
     if (BU && BU.prototype && defRO(BU.prototype, "IsOpenRewardVideo", function () { return true; })) S.bu = 1;
 
     /* 3) 各平台分支实现（覆盖非 iOS 渠道，并兜住服务端动态开关） */
-    var iOSU = (req("iOSUtils") || {}).default;
+    var iOSU = ctor(req("iOSUtils"), "iOSUtils");
     if (iOSU && patchMethod(iOSU, iOSU.prototype, "loadRewardVideoAd", function (o) {
         return function (cb, adid) {
           if (!S.noad) return o.call(this, cb, adid);
@@ -369,7 +401,7 @@
         };
       }, "iOSUtils")) n++;
 
-    var ADU = (req("ADUtils") || {}).default;
+    var ADU = ctor(req("ADUtils"), "ADUtils");
     if (ADU && patchMethod(ADU, ADU.prototype, "showRewardAd", function (o) {
         return function () {
           if (!S.noad) return o.apply(this, arguments);
@@ -387,7 +419,7 @@
         };
       }, "chSDK")) n++;
 
-    var LY = (req("LYUtils") || {}).default;
+    var LY = ctor(req("LYUtils"), "LYUtils");
     if (LY && patchMethod(LY, LY.prototype, "playAD", function (o) {
         return function (cb, adid, param) {
           if (!S.noad) return o.call(this, cb, adid, param);
@@ -399,7 +431,7 @@
     S.aux = n;
 
     var smMod = req("SocketMgr");
-    try { S.sock = (smMod && smMod.default && smMod.default.I) ? 1 : 0; } catch (e) {}
+    try { S.sock = singleton(smMod, "SocketMgr") ? 1 : 0; } catch (e) {}
   }
 
   /* ---------- 全局变速（引擎 Scheduler timeScale，见文件头说明） ---------- */
@@ -414,8 +446,7 @@
       sch.setTimeScale(want);
       // 同步官方 2 倍速开关的 UI 图标状态（纯表现层，不改逻辑）
       try {
-        var SM = (req("SettingManager") || {}).default;
-        var inst = SM && SM.I;
+        var inst = singleton(req("SettingManager"), "SettingManager");
         if (inst && typeof inst.setFightSpeed === "function") inst.setFightSpeed(want > 1);
       } catch (e) {}
       S.cur = want;
@@ -426,7 +457,7 @@
   /* ---------- 诊断：区分本地模拟 / 服务端战报回放 ---------- */
   function hookDiag() {
     var BLm = req("BattleLogic");
-    var BL = BLm && BLm.BattleLogic;
+    var BL = ctor(BLm, "BattleLogic");
     if (BL && BL.prototype && BL.prototype.frameUpdate && BL.prototype.frameUpdate.__zqd !== 1) {
       var oB = BL.prototype.frameUpdate;
       BL.prototype.frameUpdate = function (t) {
@@ -438,7 +469,7 @@
     } else if (BL && BL.prototype) { D.sim = D.sim || 0; }
 
     var CRm = req("ConfigReader");
-    var CR = CRm && CRm.ConfigReader;
+    var CR = ctor(CRm, "ConfigReader");
     if (CR && CR.prototype && CR.prototype.loadMission && CR.prototype.loadMission.__zqd !== 1) {
       var oL = CR.prototype.loadMission;
       CR.prototype.loadMission = function (t) {
