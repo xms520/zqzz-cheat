@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, hpMine: 0, hpFoe: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -71,13 +71,13 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v13 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v14 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
             " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + 
-            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType +
+            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " cfgT=" + S.cfgTables +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -99,6 +99,11 @@
       /* atkMul = 攻击倍率（1=关；2/5/10/100 等），未知值安全回退 1 */
       var am = Number(j.atkMul);
       S.atkMul = (am > 1 && am <= 1000) ? am : 1;
+      /* onlyMain: 1=秒杀/倍攻仅对主线(LevelType.Common=1)生效，0=全部战斗 */
+      if (typeof j.onlyMain !== "undefined") S.onlyMain = j.onlyMain ? 1 : 0;
+      /* 配置表：cfgDump=1 打表名清单；cfgDump="表A,表B" 打指定表内容；cfgSet={...} 改值 */
+      if (typeof j.cfgDump !== "undefined") S.cfgDump = j.cfgDump;
+      if (j.cfgSet && typeof j.cfgSet === "object") S.cfgSet = j.cfgSet;
     } catch (e) {}
   }
 
@@ -664,13 +669,105 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v13 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v14 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
     };
     EM.prototype.receiveEL.__zqp = 1;
     log("diag: EMgr.receiveEL hooked (全协议探针)");
+  }
+
+  /* ---------- 配置表 dump / 改表 ----------
+     实证链路：CDN 下载 spe.txt+cfg0~cfg3.txt → Pako.inflate → binary2string
+               → CfgMgr.addJsonConfig(text) → this.configData[表名] = 表数据
+     hook addJsonConfig 即可：① dump 全部表名与规模 ② 动态改表（绕过 md5 校验）
+
+     flags 用法：
+       "cfgDump": 1             → 把表名清单写到 zqzz_cfg.txt
+       "cfgDump": "npc_tank,tank_base"  → 指定表的完整内容写到 zqzz_cfg_<表名>.json
+       "cfgSet": {"表名#id#字段": 值}    → 运行时改值（如 {"ad_reward#1#max_count": 999}） */
+  var CFG = "@@CFG_PATH@@";
+
+  function cfgWrite(name, text) {
+    var f = fs(); if (!f) return;
+    try { f.writeStringToFile(text, name); } catch (e) {}
+  }
+
+  function hookCfg() {
+    var m = req("CfgMgr");
+    var CG = ctor(m, "CfgMgr");
+    if (!CG || !CG.prototype) return;
+    if (CG.prototype.addJsonConfig && CG.prototype.addJsonConfig.__zqc !== 1) {
+      var oAdd = CG.prototype.addJsonConfig;
+      CG.prototype.addJsonConfig = function (text) {
+        var r = oAdd.call(this, text);
+        try {
+          var cd = this.configData || {};
+          var names = [];
+          for (var k in cd) {
+            var t = cd[k];
+            var n = (t && typeof t === "object") ? (Array.isArray(t) ? t.length : Object.keys(t).length) : 1;
+            names.push(k + "(" + n + ")");
+          }
+          S.cfgTables = names.length;
+          cfgWrite(CFG, "ver=v14 cfgTables=" + names.length + "\n" + names.join("\n"));
+          log("cfg dumped: " + names.length + " tables");
+          // 指定表内容 dump
+          var want = S.cfgDump;
+          if (typeof want === "string" && want.length) {
+            var arr = want.split(",");
+            for (var i = 0; i < arr.length; i++) {
+              var nm = arr[i].replace(/^\s+|\s+$/g, "");
+              if (!nm || !cd[nm]) continue;
+              var p = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_" + nm + ".json");
+              cfgWrite(p, JSON.stringify(cd[nm]));
+              log("cfg dumped table " + nm);
+            }
+          }
+        } catch (e) {}
+        return r;
+      };
+      CG.prototype.addJsonConfig.__zqc = 1;
+      log("diag: CfgMgr.addJsonConfig hooked (配置表 dump)");
+    }
+  }
+
+  /* 运行时改表（在 addJsonConfig 之后、进入游戏后生效） */
+  function applyCfgSet() {
+    var set = S.cfgSet;
+    if (!set || typeof set !== "object") return;
+    var CGm = req("CfgMgr");
+    var inst = singleton(CGm, "CfgMgr");
+    if (!inst || !inst.configData) return;
+    for (var path in set) {
+      if (S.cfgApplied && S.cfgApplied[path] === 1) continue;
+      var parts = path.split("#");
+      try {
+        if (parts.length === 3) {
+          var tbl = inst.configData[parts[0]];
+          if (tbl && tbl[parts[1]]) {
+            tbl[parts[1]][parts[2]] = set[path];
+            S.cfgApplied = S.cfgApplied || {};
+            S.cfgApplied[path] = 1;
+            S.note = "cfg:" + path + "=" + set[path];
+            log("cfgSet " + path + " = " + set[path]);
+          } else if (tbl) {
+            tbl[parts[1]] = tbl[parts[1]] || {};
+            tbl[parts[1]][parts[2]] = set[path];
+            S.cfgApplied = S.cfgApplied || {};
+            S.cfgApplied[path] = 1;
+          }
+        } else if (parts.length === 2) {
+          var t2 = inst.configData[parts[0]];
+          if (t2) {
+            t2[parts[1]] = set[path];
+            S.cfgApplied = S.cfgApplied || {};
+            S.cfgApplied[path] = 1;
+          }
+        }
+      } catch (e2) {}
+    }
   }
 
   function tick() {
@@ -684,6 +781,8 @@
       hookUnitDisplay();
       hookDiag();
       hookProto();
+      hookCfg();
+      applyCfgSet();
       applySpeed();
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
