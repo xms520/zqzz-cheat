@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", dumpSig: "", hpMine: 0, hpFoe: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", dumpSig: "", noSuppress: 1, supBlk: 0, hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -71,13 +71,13 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v20 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v21 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
             " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + 
-            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " cfgT=" + S.cfgTables + " rf=" + S.rfDbg +
+            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " sup=" + S.supBlk + " cfgT=" + S.cfgTables + " rf=" + S.rfDbg +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -101,6 +101,8 @@
       S.atkMul = (am > 1 && am <= 1000) ? am : 1;
       /* onlyMain: 1=秒杀/倍攻仅对主线(LevelType.Common=1)生效，0=全部战斗 */
       if (typeof j.onlyMain !== "undefined") S.onlyMain = j.onlyMain ? 1 : 0;
+      /* noSuppress: 1=解除战力压制（默认），0=恢复原逻辑 */
+      if (typeof j.noSuppress !== "undefined") S.noSuppress = j.noSuppress ? 1 : 0;
       /* 配置表：cfgDump=1 打表名清单；cfgDump="表A,表B" 打指定表内容；cfgSet={...} 改值 */
       if (typeof j.cfgDump !== "undefined") S.cfgDump = j.cfgDump;
       if (j.cfgSet && typeof j.cfgSet === "object") S.cfgSet = j.cfgSet;
@@ -671,7 +673,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v20 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v21 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -750,7 +752,7 @@
       names.push(k + "(" + n + ")");
     }
     S.cfgTables = names.length;
-    cfgWrite(CFG, "ver=v20 cfgTables=" + names.length + "\n" + names.join("\n"));
+    cfgWrite(CFG, "ver=v21 cfgTables=" + names.length + "\n" + names.join("\n"));
 
     var want = S.cfgDump;
     var done = "tables:" + names.length;
@@ -814,7 +816,7 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v20 cfgTables=" + names.length + "\n" + names.join("\n"));
+          cfgWrite(CFG, "ver=v21 cfgTables=" + names.length + "\n" + names.join("\n"));
         } catch (e) {}
         return r;
       };
@@ -925,6 +927,44 @@
     } catch (e) { S.note = "refresh-err:" + e; }
   }
 
+  /* ---------- 压制解除（等级压制 / 战力压制）----------
+     实证1：等级压制在 ConfigReader.createUnitBySetting
+       if (missionType == Common && n) {
+         var d = MissionCfg.press_level || 1;       // 关卡压制等级
+         var u = getPlayerLv().lv;                  // 玩家等级
+         if (d > u) {
+           var f = d - u;
+           var p = getCommonCfgValue(E_CommonValue.MainStorylineLevel);  // = 0.15
+           var g = 1 + f * p;                       // 敌方属性放大系数
+           h.atk *= g; h.def *= g; h.hp *= g;
+         }
+       }
+       ⇒ 把 MainStorylineLevel(10025) 改为 0 即彻底消除（改表方式，见 UI 按钮）
+
+     实证2：战力压制在 ConfigReader.getCombatCheckSkills(unitGroup)
+       遍历我方单位取最高战力 e；若关卡设定战力 U > e（战力不足），
+       按 per 档位返回减益技能 id：[skill] → 施加减益
+       ⇒ 直接包装该方法返回 [] 即可完全消除战力压制 */
+  function hookSuppress() {
+    var m = req("ConfigReader");
+    var CR = ctor(m, "ConfigReader");
+    if (!CR || !CR.prototype) return;
+    if (CR.prototype.getCombatCheckSkills && CR.prototype.getCombatCheckSkills.__zqs !== 1) {
+      var oGet = CR.prototype.getCombatCheckSkills;
+      CR.prototype.getCombatCheckSkills = function (t) {
+        try {
+          if (S.noSuppress) {
+            S.supBlk = (S.supBlk || 0) + 1;
+            return [];
+          }
+        } catch (e) {}
+        return oGet.call(this, t);
+      };
+      CR.prototype.getCombatCheckSkills.__zqs = 1;
+      log("hook ConfigReader.getCombatCheckSkills ★战力压制入口");
+    }
+  }
+
   function tick() {
     try {
       var f = fs();
@@ -936,6 +976,7 @@
       hookUnitDisplay();
       hookDiag();
       hookProto();
+      hookSuppress();
       hookCfg();
       checkDumpReq();
       applyCfgSet();
