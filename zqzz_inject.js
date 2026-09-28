@@ -72,7 +72,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v10 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v11 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -397,9 +397,13 @@
       var oSetHp = OM.prototype.setMonsterHp;
       OM.prototype.setMonsterHp = function (hp, atkId, force) {
         S.hpCalls = (S.hpCalls || 0) + 1;      // 无条件计数：确认挂点是否真被调用
+        var raw = hp;
         try {
+          var mine = !!this.isMyselfAtk;
+          if (mine) S.hpMine = (S.hpMine || 0) + 1; else S.hpFoe = (S.hpFoe || 0) + 1;
+
           /* ---- 无敌：我方血量拒绝下降 ---- */
-          if (S.inv && this.isMyselfAtk) {
+          if (S.inv && mine) {
             S.ib2 = (S.ib2 || 0) + 1;
             this.isMonsterDead = false;
             if (this.monsterData && this.monsterData.setting) {
@@ -412,34 +416,44 @@
             }
             return;
           }
-          /* ---- 诊断：记录我方/敌方被调用的分布 ---- */
-          if (this.isMyselfAtk) S.hpMine = (S.hpMine || 0) + 1;
-          else S.hpFoe = (S.hpFoe || 0) + 1;
-          /* ---- 倍攻：按【已损失血量比例】放大（基准用 maxHp，固定不漂移） ----
-             ⚠️ 坑1：hp 是绝对值（服务端下发），不是伤害量，不能直接乘。
-             ⚠️ 坑2：若拿"上一帧血量"当基准，会随血量一起下滑而发散
-                     （例：100 放大成 50 后，服务端发 90 反而 >= 50，差分永久失效）。
-                     ⇒ 必须用固定的 this.maxHp 当基准。
-             ⚠️ 坑3：调用方 gameBattleMgr:719 是 `n.setMonsterHp(t.hp)` 只传 1 参，
-                     原函数死亡判定 `t <= 0 && e` 中 e 为 undefined ⇒ 永不死亡。下面补传 atkId。
 
-             算法：srvLost = 服务端已损失比例 → bigLost = srvLost * atkMul
-                   bigLost >= 1 即直接击杀（hp = 0，触发 setUnitDead） */
-          var raw = hp;
-          if (S.atkMul > 1 && !this.isMyselfAtk && typeof raw === "number") {
-            var max = this.maxHp || (this.monsterData && this.monsterData.setting && this.monsterData.setting.maxHp) || 0;
-            if (max > 0 && raw < max && raw >= 0) {
-              var srvLost = (max - raw) / max;
-              var bigLost = srvLost * S.atkMul;
-              var nh2 = bigLost >= 1 ? 0 : max * (1 - bigLost);
-              S.kh2 = (S.kh2 || 0) + 1;
-              S.lastDmg = max + "/" + raw + " lost" + (srvLost * 100).toFixed(1) + "%x" + S.atkMul;
-              hp = nh2;
-              if (hp <= 0) S.killHits2 = (S.killHits2 || 0) + 1;
+          /* ---- 秒杀/倍攻（敌方）----
+             ⚠️ 服务端每帧回写血量，比例放大会被覆盖 ⇒ 必须一次性打到 0，
+                并主动调用 setUnitDead 让 isMonsterDead=true 永久锁定
+                （后续服务端再推血量会被原函数 `if (!this.isMonsterDead)` 早退忽略）。 */
+          if (!mine && typeof raw === "number") {
+            var maxHp = this.maxHp ||
+              (this.monsterData && this.monsterData.setting && this.monsterData.setting.maxHp) || 0;
+            var lost = maxHp > 0 && raw < maxHp;   // 已发生掉血（构造初始化时 raw==maxHp，不触发）
+            if (lost) {
+              if (S.kill) {
+                /* 秒杀：任何掉血 → 直接归零 */
+                S.kh2 = (S.kh2 || 0) + 1;
+                hp = 0;
+              } else if (S.atkMul > 1) {
+                /* 倍攻：按已损失比例放大 */
+                var srvLost = (maxHp - raw) / maxHp;
+                var bigLost = srvLost * S.atkMul;
+                S.kh2 = (S.kh2 || 0) + 1;
+                S.lastDmg = maxHp + "/" + raw + " lost" + (srvLost * 100).toFixed(1) + "%x" + S.atkMul;
+                hp = bigLost >= 1 ? 0 : maxHp * (1 - bigLost);
+              }
+            }
+            /* 血量归零：主动致死（不依赖原函数的 atkId 判定） */
+            if (hp <= 0) {
+              S.killHits2 = (S.killHits2 || 0) + 1;
+              this.monsterHp = 0;
+              try {
+                if (cc && cc.isValid && cc.isValid(this.bloodNode)) this.updateBloodInfo(0, this.monstermp);
+              } catch (x3) {}
+              this.isMonsterDead = true;
+              try { this.setUnitDead(); } catch (x4) {}
+              S.ib3 = (S.ib3 || 0) + 1;
+              return;
             }
           }
         } catch (x) {}
-        /* 关键：补传 atkId（非 0 真值）让原函数的死亡判定 `t <= 0 && e` 成立 */
+        /* 补传 atkId（非 0 真值）让原函数的死亡判定 `t <= 0 && e` 成立 */
         if (typeof atkId === "undefined" || !atkId) atkId = -1;
         return oSetHp.call(this, hp, atkId, force);
       };
@@ -639,7 +653,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v10 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v11 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
