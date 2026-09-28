@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", passReq: 0, passCnt: 0, passPrev: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", passReq: 0, passCnt: 0, passPrev: 0, hpCalls: 0, hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -72,12 +72,13 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v9 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v10 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
             " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + " pc=" + S.passCnt +
+            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -395,6 +396,7 @@
     if (OM.prototype.setMonsterHp && OM.prototype.setMonsterHp.__zq !== 1) {
       var oSetHp = OM.prototype.setMonsterHp;
       OM.prototype.setMonsterHp = function (hp, atkId, force) {
+        S.hpCalls = (S.hpCalls || 0) + 1;      // 无条件计数：确认挂点是否真被调用
         try {
           /* ---- 无敌：我方血量拒绝下降 ---- */
           if (S.inv && this.isMyselfAtk) {
@@ -410,6 +412,9 @@
             }
             return;
           }
+          /* ---- 诊断：记录我方/敌方被调用的分布 ---- */
+          if (this.isMyselfAtk) S.hpMine = (S.hpMine || 0) + 1;
+          else S.hpFoe = (S.hpFoe || 0) + 1;
           /* ---- 倍攻：按【已损失血量比例】放大（基准用 maxHp，固定不漂移） ----
              ⚠️ 坑1：hp 是绝对值（服务端下发），不是伤害量，不能直接乘。
              ⚠️ 坑2：若拿"上一帧血量"当基准，会随血量一起下滑而发散
@@ -634,7 +639,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v9 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v10 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
