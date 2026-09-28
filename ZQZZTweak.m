@@ -269,7 +269,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 470;
+        CGFloat w = 268, h = 508;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -386,9 +386,19 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [b3 addTarget:self action:@selector(onMorale) forControlEvents:UIControlEventTouchUpInside];
         [g_panel addSubview:b3];
 
+        UIButton *b4 = [UIButton buttonWithType:UIButtonTypeSystem];
+        b4.frame = CGRectMake(14, 402, w - 28, 32);
+        b4.backgroundColor = [UIColor colorWithRed:0.55 green:0.20 blue:0.45 alpha:1];
+        b4.layer.cornerRadius = 8;
+        [b4 setTitle:@"暴击率拉高 (AtkParamCri para)" forState:UIControlStateNormal];
+        [b4 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        b4.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [b4 addTarget:self action:@selector(onCrit) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:b4];
+
         // 验证改表机制（改 common_value#5025 征收上限，可见即可证）
         UIButton *cfgTest = [UIButton buttonWithType:UIButtonTypeSystem];
-        cfgTest.frame = CGRectMake(14, 402, w - 28, 34);
+        cfgTest.frame = CGRectMake(14, 440, w - 28, 34);
         cfgTest.backgroundColor = [UIColor colorWithRed:0.62 green:0.32 blue:0.10 alpha:1];
         cfgTest.layer.cornerRadius = 8;
         [cfgTest setTitle:@"验证改表(征收上限→9999)" forState:UIControlStateNormal];
@@ -456,6 +466,12 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
     UIViewController *vc = g_win.rootViewController;
     if (vc) [vc presentViewController:al animated:YES completion:nil];
+}
+- (void)onCrit {
+    // 暴击率 = clamp(参数1*暴击/(暴击+防暴*参数2+参数3) + 参数4, 0, 0.8)
+    // 原 para="2,1,10,-1"（参数4=-1 把暴击率压到最低）→ 改 参数4=0.75 大幅提升
+    [self writeCfgSet:@"{\"common_value#384#para\":\"2,1,10,0.75\"}"];
+    [self cfgTip:@"暴击率公式参数4: -1 → 0.75\n\n公式=clamp(2*暴击/(暴击+防暴*1+10)-1, 0, 0.8)\n改后暴击率可接近上限 0.8\n\n进主线战斗看是否频繁暴击（红字大伤害）"];
 }
 - (void)onCfgTest {
     // 改 common_value[5025].value = 9999（【新征收】最大累计时间 960 分钟 → 9999 分钟）
