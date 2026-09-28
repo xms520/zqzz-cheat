@@ -119,9 +119,11 @@ static BOOL build_injected_main(void) {
     NSString *flags  = doc_path(@"zqzz_flags.json");
     NSString *probe  = doc_path(@"zqzz_js_probe.txt");
     NSString *jlog   = doc_path(@"zqzz_js.log");
+    NSString *proto  = doc_path(@"zqzz_proto.txt");
     inject = [inject stringByReplacingOccurrencesOfString:@"@@FLAGS_PATH@@" withString:flags];
     inject = [inject stringByReplacingOccurrencesOfString:@"@@PROBE_PATH@@" withString:probe];
     inject = [inject stringByReplacingOccurrencesOfString:@"@@LOG_PATH@@" withString:jlog];
+    inject = [inject stringByReplacingOccurrencesOfString:@"@@PROTO_PATH@@" withString:proto];
 
     NSMutableData *out = [NSMutableData dataWithData:raw];
     [out appendData:[@"\n\n/* ---- ZQZZ injected ---- */\n" dataUsingEncoding:NSUTF8StringEncoding]];
