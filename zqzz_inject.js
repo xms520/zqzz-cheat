@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", hpMine: 0, hpFoe: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", dumpSig: "", hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -71,7 +71,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v15 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v16 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -671,7 +671,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v15 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v16 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -738,6 +738,64 @@
     return res.length;
   }
 
+  /* 从内存 configData 直接导出（不依赖 hook —— 配置表在登录时已加载完，
+     用户点按钮时 addJsonConfig 早已执行过，hook 不会再触发） */
+  function dumpFromMemory(inst) {
+    var cd = inst && inst.configData;
+    if (!cd) { S.note = "dump:no-configData"; return "no-data"; }
+    var names = [];
+    for (var k in cd) {
+      var t = cd[k];
+      var n = (t && typeof t === "object") ? (Array.isArray(t) ? t.length : Object.keys(t).length) : 1;
+      names.push(k + "(" + n + ")");
+    }
+    S.cfgTables = names.length;
+    cfgWrite(CFG, "ver=v16 cfgTables=" + names.length + "\n" + names.join("\n"));
+
+    var want = S.cfgDump;
+    var done = "tables:" + names.length;
+    if (typeof want === "string" && want.length) {
+      if (want === "auto" || want === "1" || want === "key") {
+        S.cfgKey = dumpKeyTables(cd);
+        done = "key=" + S.cfgKey;
+      } else if (want === "all") {
+        cfgWrite(CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_all.json"), JSON.stringify(cd));
+        done = "all:" + names.length;
+      } else {
+        var arr = want.split(","), got = [];
+        for (var i = 0; i < arr.length; i++) {
+          var nm = arr[i].replace(/^\s+|\s+$/g, "");
+          if (!nm || !cd[nm]) continue;
+          cfgWrite(CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_" + nm + ".json"), JSON.stringify(cd[nm]));
+          got.push(nm);
+        }
+        done = "tables=" + got.join(",");
+      }
+    }
+    if (S.cfgFind) done += " find=" + findInTables(cd, S.cfgFind);
+    S.note = "dump:" + done;
+    log("cfg dump -> " + done);
+    return done;
+  }
+
+  /* 检查按钮请求（边沿检测，避免 flags 常驻导致重复导出） */
+  function checkDumpReq() {
+    var CGm = req("CfgMgr");
+    var inst = singleton(CGm, "CfgMgr");
+    if (!inst) return;
+    /* cfgDump=auto 常开时：只在首次或表数变化时导出一次 */
+    var want = S.cfgDump;
+    if (!want) return;
+    var cd = inst.configData;
+    if (!cd) return;
+    var cnt = 0; for (var k in cd) cnt++;
+    if (cnt === 0) { S.note = "dump:wait-cfg-loaded"; return; }
+    var sig = want + "|" + cnt;
+    if (S.dumpSig === sig) return;
+    S.dumpSig = sig;
+    dumpFromMemory(inst);
+  }
+
   function hookCfg() {
     var m = req("CfgMgr");
     var CG = ctor(m, "CfgMgr");
@@ -747,6 +805,7 @@
       CG.prototype.addJsonConfig = function (text) {
         var r = oAdd.call(this, text);
         try {
+          /* 表名清单：每次加载都刷新（登录时会调用 5 次） */
           var cd = this.configData || {};
           var names = [];
           for (var k in cd) {
@@ -755,35 +814,12 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v15 cfgTables=" + names.length + "\n" + names.join("\n"));
-          log("cfg dumped: " + names.length + " tables");
-          // 指定表内容 dump
-          var want = S.cfgDump;
-          if (typeof want === "string" && want.length) {
-            if (want === "auto" || want === "1" || want === "key") {
-              S.cfgKey = dumpKeyTables(cd);
-            } else if (want === "all") {
-              var pall = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_all.json");
-              cfgWrite(pall, JSON.stringify(cd));
-              log("cfg ALL dumped");
-            } else {
-              var arr = want.split(",");
-              for (var i = 0; i < arr.length; i++) {
-                var nm = arr[i].replace(/^\s+|\s+$/g, "");
-                if (!nm || !cd[nm]) continue;
-                var p = CFG.replace(/zqzz_cfg\.txt$/, "zqzz_cfg_" + nm + ".json");
-                cfgWrite(p, JSON.stringify(cd[nm]));
-                log("cfg dumped table " + nm);
-              }
-            }
-          }
-          // 关键词搜索
-          if (S.cfgFind) findInTables(cd, S.cfgFind);
+          cfgWrite(CFG, "ver=v16 cfgTables=" + names.length + "\n" + names.join("\n"));
         } catch (e) {}
         return r;
       };
       CG.prototype.addJsonConfig.__zqc = 1;
-      log("diag: CfgMgr.addJsonConfig hooked (配置表 dump)");
+      log("diag: CfgMgr.addJsonConfig hooked (表名清单)");
     }
   }
 
@@ -836,6 +872,7 @@
       hookDiag();
       hookProto();
       hookCfg();
+      checkDumpReq();
       applyCfgSet();
       applySpeed();
       if (S.hp && S.unit) {
