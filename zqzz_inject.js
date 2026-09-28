@@ -72,7 +72,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v11 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v12 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -446,6 +446,17 @@
               try {
                 if (cc && cc.isValid && cc.isValid(this.bloodNode)) this.updateBloodInfo(0, this.monstermp);
               } catch (x3) {}
+              /* ⚠️ setUnitDead 只隐藏显示节点（node.active=false），逻辑层单位仍"活着"，
+                 会导致我方继续选中它攻击（表现为"跟空气对打"）。
+                 必须同时把逻辑层的血量置 0 ⇒ Unit.isDeath() → HpEngine.isDeath() → hp<=0
+                 ⇒ UnitGroup.isAllDead() 成立 ⇒ 战斗正常结束。 */
+              try {
+                var ud = this.monsterData;
+                if (ud) {
+                  if (ud.hpEngine) ud.hpEngine.hp = 0;
+                  if (ud.setting) ud.setting.initHp = 0;
+                }
+              } catch (x5) {}
               this.isMonsterDead = true;
               try { this.setUnitDead(); } catch (x4) {}
               S.ib3 = (S.ib3 || 0) + 1;
@@ -653,7 +664,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v11 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v12 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
