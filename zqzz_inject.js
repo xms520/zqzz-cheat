@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -58,7 +58,7 @@
      - mtype: 最近一次 ConfigReader.loadMission 的 missionType
      - skip : 最近一次 loadMission 的 isSkipMode
   */
-  var D = window.__ZQZZ_D__ = { sim: 0, rpl: 0, mtype: -1, skip: 0, simFrames: 0, rplFrames: 0 };
+  var D = window.__ZQZZ_D__ = { sim: 0, rpl: 0, mtype: -1, skip: 0, simFrames: 0, rplFrames: 0, proto: [] };
   S.diag = "";
 
   function fs() { try { return jsb.fileUtils; } catch (e) { return null; } }
@@ -71,13 +71,14 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v4 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v6 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
+            " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
-            " wr=" + S.writable + " seen=" + S.seen + " note=" + S.note;
+            " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
     try { f.writeStringToFile(t, PROBE); } catch (e) {}
   }
 
@@ -370,6 +371,57 @@
     if (n > S.rplHook) S.rplHook = n;
   }
 
+  /* ---------- 通用单位层（覆盖全部战斗类型） ----------
+     ordMonster 是战斗单位的显示脚本，所有战斗类型最终都经由它更新血量：
+       setMonsterHp(hp, atkId, force)  ← 血量写入 + 死亡判定
+       setUnitDead()                   ← 死亡落点
+       isMyselfAtk                     ← 阵营（true = 我方）
+     这是最底层、最通用的点位，不依赖具体是哪个 BattleMgr。 */
+  function hookUnitDisplay() {
+    var om = req("ordMonster");
+    var OM = ctor(om, "ordMonster");
+    if (!OM || !OM.prototype) return;
+    var n = 0;
+
+    if (OM.prototype.setMonsterHp && OM.prototype.setMonsterHp.__zq !== 1) {
+      var oSetHp = OM.prototype.setMonsterHp;
+      OM.prototype.setMonsterHp = function (hp, atkId, force) {
+        try {
+          if (S.inv && this.isMyselfAtk) {
+            S.ib2 = (S.ib2 || 0) + 1;
+            this.isMonsterDead = false;
+            if (this.monsterData && this.monsterData.setting) {
+              var mx = this.monsterData.setting.maxHp || this.maxHp || 1;
+              this.monsterData.setting.initHp = mx;
+            }
+            this.monsterHp = this.maxHp || 1;
+            if (cc && cc.isValid && cc.isValid(this.bloodNode)) {
+              try { this.updateBloodInfo(this.monsterHp, this.monstermp); } catch (x2) {}
+            }
+            return;
+          }
+        } catch (x) {}
+        return oSetHp.call(this, hp, atkId, force);
+      };
+      OM.prototype.setMonsterHp.__zq = 1;
+      log("unit hook ordMonster.setMonsterHp ★通用血量入口");
+      n++;
+    }
+
+    if (OM.prototype.setUnitDead && OM.prototype.setUnitDead.__zq !== 1) {
+      var oDead = OM.prototype.setUnitDead;
+      OM.prototype.setUnitDead = function () {
+        try { if (S.inv && this.isMyselfAtk) { S.ib3 = (S.ib3 || 0) + 1; return; } } catch (x) {}
+        return oDead.call(this);
+      };
+      OM.prototype.setUnitDead.__zq = 1;
+      log("unit hook ordMonster.setUnitDead");
+      n++;
+    }
+
+    if (n > (S.omHook || 0)) S.omHook = n;
+  }
+
   /* ---------- 免广告 ----------
      ⚠️ 关键：这些方法一律定义在【构造器的 prototype】上（实证 grep）：
        ModelAD.prototype.watchAD / ModelAD.prototype.getAdInfo
@@ -531,6 +583,30 @@
     }
   }
 
+  /* ---------- 全协议探针：记录进入的 S2C 协议号，用于定位副本走哪条链 ----------
+     EMgr.receiveEL(protoId, ...) 是所有网络消息的唯一分发点（实证）。 */
+  var PROTO = "@@PROTO_PATH@@";
+  function hookProto() {
+    var em = req("EMgr");
+    var EM = ctor(em, "EMgr");
+    if (!EM || !EM.prototype || !EM.prototype.receiveEL) return;
+    if (EM.prototype.receiveEL.__zqp === 1) return;
+    var oR = EM.prototype.receiveEL;
+    EM.prototype.receiveEL = function (id) {
+      try {
+        if (id && D.proto.indexOf(id) < 0) {
+          D.proto.push(id);
+          if (D.proto.length > 64) D.proto.shift();
+          var f = fs();
+          if (f) f.writeStringToFile("ver=v6 protocols: " + D.proto.join(","), PROTO);
+        }
+      } catch (e) {}
+      return oR.apply(this, arguments);
+    };
+    EM.prototype.receiveEL.__zqp = 1;
+    log("diag: EMgr.receiveEL hooked (全协议探针)");
+  }
+
   function tick() {
     try {
       var f = fs();
@@ -539,7 +615,9 @@
       hookBattle();
       hookAd();
       hookReport();
+      hookUnitDisplay();
       hookDiag();
+      hookProto();
       applySpeed();
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
