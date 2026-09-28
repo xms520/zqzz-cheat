@@ -71,13 +71,13 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v19 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v20 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
             " atkMul=" + S.atkMul + " kh2=" + S.kh2 + " kh3=" + S.killHits2 + 
-            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " cfgT=" + S.cfgTables + " cfgK=" + S.cfgKey +
+            " hpCall=" + S.hpCalls + " hpM=" + S.hpMine + " hpF=" + S.hpFoe + " btype=" + S.battleType + " cfgT=" + S.cfgTables + " rf=" + S.rfDbg +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -671,7 +671,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v19 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v20 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -750,7 +750,7 @@
       names.push(k + "(" + n + ")");
     }
     S.cfgTables = names.length;
-    cfgWrite(CFG, "ver=v19 cfgTables=" + names.length + "\n" + names.join("\n"));
+    cfgWrite(CFG, "ver=v20 cfgTables=" + names.length + "\n" + names.join("\n"));
 
     var want = S.cfgDump;
     var done = "tables:" + names.length;
@@ -814,7 +814,7 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v19 cfgTables=" + names.length + "\n" + names.join("\n"));
+          cfgWrite(CFG, "ver=v20 cfgTables=" + names.length + "\n" + names.join("\n"));
         } catch (e) {}
         return r;
       };
@@ -895,6 +895,9 @@
         if (inst.atkGroup) groups.push(inst.atkGroup);
         if (inst.defGroup) groups.push(inst.defGroup);
       }
+      /* 诊断：记录实例状态 */
+      S.rfDbg = "inst=" + (inst ? 1 : 0) + " atk=" + (inst && inst.atkGroup ? 1 : 0) +
+                " def=" + (inst && inst.defGroup ? 1 : 0) + " BL=" + (BL ? 1 : 0);
       var n = 0;
       for (var i = 0; i < groups.length; i++) {
         var g = groups[i];
@@ -912,7 +915,13 @@
         }
         n++;
       }
-      if (n) { S.note += " refresh=" + n; log("snapshot refresh: " + n + " groups"); }
+      S.rfTotal = (S.rfTotal || 0) + n;
+      if (n) {
+        S.note = ((S.note || "").indexOf("refresh=") >= 0)
+          ? (S.note.replace(/ refresh=\d+/, "") + " refresh=" + S.rfTotal)
+          : (S.note || "") + " refresh=" + S.rfTotal;
+        log("snapshot refresh: +" + n + " (total " + S.rfTotal + ")");
+      }
     } catch (e) { S.note = "refresh-err:" + e; }
   }
 
@@ -930,10 +939,9 @@
       hookCfg();
       checkDumpReq();
       applyCfgSet();
-      /* 改过表后：持续回填新创建的单位组（WarComm 是构造快照，新战斗需重新套用） */
-      if (S.cfgApplied && Object.keys(S.cfgApplied).length) {
-        if ((S.rfTick = (S.rfTick || 0) + 1) >= 4) { S.rfTick = 0; refreshLiveSnapshots(); }
-      }
+      /* 只要配过 cfgSet 就持续回填（WarComm 是构造快照：已存在实例需回填，
+         新战斗会在构造时读新值——两者都要保证） */
+      if ((S.rfTick = (S.rfTick || 0) + 1) >= 4) { S.rfTick = 0; refreshLiveSnapshots(); }
       applySpeed();
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
