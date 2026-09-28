@@ -71,7 +71,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v16 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v17 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -671,7 +671,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v16 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v17 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -750,7 +750,7 @@
       names.push(k + "(" + n + ")");
     }
     S.cfgTables = names.length;
-    cfgWrite(CFG, "ver=v16 cfgTables=" + names.length + "\n" + names.join("\n"));
+    cfgWrite(CFG, "ver=v17 cfgTables=" + names.length + "\n" + names.join("\n"));
 
     var want = S.cfgDump;
     var done = "tables:" + names.length;
@@ -814,7 +814,7 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v16 cfgTables=" + names.length + "\n" + names.join("\n"));
+          cfgWrite(CFG, "ver=v17 cfgTables=" + names.length + "\n" + names.join("\n"));
         } catch (e) {}
         return r;
       };
@@ -830,34 +830,41 @@
     var CGm = req("CfgMgr");
     var inst = singleton(CGm, "CfgMgr");
     if (!inst || !inst.configData) return;
+    var ok = [], bad = [];
     for (var path in set) {
-      if (S.cfgApplied && S.cfgApplied[path] === 1) continue;
       var parts = path.split("#");
+      var want = set[path];
       try {
+        var tbl = inst.configData[parts[0]];
+        if (!tbl) { bad.push(path + "(no-table)"); continue; }
+        var row = tbl[parts[1]];
+        if (!row && parts.length === 3) { tbl[parts[1]] = {}; row = tbl[parts[1]]; }
+        if (!row) { bad.push(path + "(no-row)"); continue; }
+
         if (parts.length === 3) {
-          var tbl = inst.configData[parts[0]];
-          if (tbl && tbl[parts[1]]) {
-            tbl[parts[1]][parts[2]] = set[path];
-            S.cfgApplied = S.cfgApplied || {};
-            S.cfgApplied[path] = 1;
-            S.note = "cfg:" + path + "=" + set[path];
-            log("cfgSet " + path + " = " + set[path]);
-          } else if (tbl) {
-            tbl[parts[1]] = tbl[parts[1]] || {};
-            tbl[parts[1]][parts[2]] = set[path];
-            S.cfgApplied = S.cfgApplied || {};
-            S.cfgApplied[path] = 1;
-          }
+          if (row[parts[2]] === want && S.cfgApplied && S.cfgApplied[path] === 1) { ok.push(path); continue; }
+          row[parts[2]] = want;
+          /* 同步初始备份（部分逻辑读 configInitData） */
+          try {
+            var ib = inst.configInitData && inst.configInitData[parts[0]];
+            if (ib && ib[parts[1]]) ib[parts[1]][parts[2]] = want;
+          } catch (e3) {}
         } else if (parts.length === 2) {
-          var t2 = inst.configData[parts[0]];
-          if (t2) {
-            t2[parts[1]] = set[path];
-            S.cfgApplied = S.cfgApplied || {};
-            S.cfgApplied[path] = 1;
-          }
+          tbl[parts[1]] = want;
+          try {
+            if (inst.configInitData) inst.configInitData[parts[0]][parts[1]] = want;
+          } catch (e3) {}
         }
-      } catch (e2) {}
+        /* 回读校验：确认真的写进去了 */
+        var rb = (parts.length === 3) ? inst.configData[parts[0]][parts[1]][parts[2]]
+                                      : inst.configData[parts[0]][parts[1]];
+        if (rb === want) { ok.push(path); S.cfgApplied = S.cfgApplied || {}; S.cfgApplied[path] = 1; }
+        else bad.push(path + "(readback=" + rb + ")");
+      } catch (e2) { bad.push(path + "(err)"); }
     }
+    if (ok.length) { S.note = "cfgOK:" + ok.join(","); }
+    if (bad.length) { S.note = "cfgBAD:" + bad.join(","); S.cfgApplied = {}; }
+    if (ok.length || bad.length) log("cfgSet ok=" + ok.join(",") + " bad=" + bad.join(","));
   }
 
   function tick() {
