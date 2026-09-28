@@ -198,12 +198,12 @@ static BOOL build_injected_main(void) {
 
 #pragma mark - 开关 + flags 同步
 
-static int g_kill = 0, g_inv = 0, g_noad = 0, g_spd = 1, g_atkMul = 1;
+static int g_kill = 0, g_inv = 0, g_noad = 0, g_spd = 1, g_atkMul = 1, g_noSuppress = 1;
 
 static void sync_flags(void) {
     NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d}",
-        g_kill, g_inv, g_noad, g_spd, g_atkMul];
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"noSuppress\":%d}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul, g_noSuppress];
     NSString *p = doc_path(@"zqzz_flags.json");
     NSError *e = nil;
     [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:&e];
@@ -269,7 +269,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 508;
+        CGFloat w = 268, h = 468;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
@@ -355,50 +355,40 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
         [cfgBtn addTarget:self action:@selector(onDumpCfg) forControlEvents:UIControlEventTouchUpInside];
         [g_panel addSubview:cfgBtn];
 
-        // ---- 纯本地参数快捷开关（战斗内本地计算，即时可见）----
-        UIButton *b1 = [UIButton buttonWithType:UIButtonTypeSystem];
-        b1.frame = CGRectMake(14, 288, w - 28, 32);
-        b1.backgroundColor = [UIColor colorWithRed:0.15 green:0.50 blue:0.32 alpha:1];
-        b1.layer.cornerRadius = 8;
-        [b1 setTitle:@"杀敌回能量→999 (TankKillAddMp)" forState:UIControlStateNormal];
-        [b1 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        b1.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [b1 addTarget:self action:@selector(onKillMp) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:b1];
+        // ---- 核心功能：压制解除 + 首充 ----
+        UIButton *c1 = [UIButton buttonWithType:UIButtonTypeSystem];
+        c1.frame = CGRectMake(14, 288, w - 28, 34);
+        c1.backgroundColor = [UIColor colorWithRed:0.72 green:0.18 blue:0.14 alpha:1];
+        c1.layer.cornerRadius = 8;
+        [c1 setTitle:@"解除等级压制 (MainStorylineLevel→0)" forState:UIControlStateNormal];
+        [c1 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        c1.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [c1 addTarget:self action:@selector(onNoLevel) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:c1];
 
-        UIButton *b2 = [UIButton buttonWithType:UIButtonTypeSystem];
-        b2.frame = CGRectMake(14, 326, w - 28, 32);
-        b2.backgroundColor = [UIColor colorWithRed:0.15 green:0.50 blue:0.32 alpha:1];
-        b2.layer.cornerRadius = 8;
-        [b2 setTitle:@"座驾能量上限→99999" forState:UIControlStateNormal];
-        [b2 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        b2.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [b2 addTarget:self action:@selector(onHorseMp) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:b2];
+        UIButton *c2 = [UIButton buttonWithType:UIButtonTypeSystem];
+        c2.frame = CGRectMake(14, 326, w - 28, 34);
+        c2.backgroundColor = [UIColor colorWithRed:0.72 green:0.18 blue:0.14 alpha:1];
+        c2.layer.cornerRadius = 8;
+        [c2 setTitle:@"解除战力压制 (getCombatCheckSkills)" forState:UIControlStateNormal];
+        [c2 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        c2.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [c2 addTarget:self action:@selector(onNoPower) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:c2];
 
-        UIButton *b3 = [UIButton buttonWithType:UIButtonTypeSystem];
-        b3.frame = CGRectMake(14, 364, w - 28, 32);
-        b3.backgroundColor = [UIColor colorWithRed:0.15 green:0.50 blue:0.32 alpha:1];
-        b3.layer.cornerRadius = 8;
-        [b3 setTitle:@"士气上限→9999 (MoraleTopMax)" forState:UIControlStateNormal];
-        [b3 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        b3.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [b3 addTarget:self action:@selector(onMorale) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:b3];
-
-        UIButton *b4 = [UIButton buttonWithType:UIButtonTypeSystem];
-        b4.frame = CGRectMake(14, 402, w - 28, 32);
-        b4.backgroundColor = [UIColor colorWithRed:0.55 green:0.20 blue:0.45 alpha:1];
-        b4.layer.cornerRadius = 8;
-        [b4 setTitle:@"暴击率拉高 (AtkParamCri para)" forState:UIControlStateNormal];
-        [b4 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        b4.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [b4 addTarget:self action:@selector(onCrit) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:b4];
+        UIButton *c3 = [UIButton buttonWithType:UIButtonTypeSystem];
+        c3.frame = CGRectMake(14, 364, w - 28, 34);
+        c3.backgroundColor = [UIColor colorWithRed:0.65 green:0.40 blue:0.10 alpha:1];
+        c3.layer.cornerRadius = 8;
+        [c3 setTitle:@"首充英雄(ChangeNpcCfg 换强NPC)" forState:UIControlStateNormal];
+        [c3 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        c3.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+        [c3 addTarget:self action:@selector(onFirstPay) forControlEvents:UIControlEventTouchUpInside];
+        [g_panel addSubview:c3];
 
         // 验证改表机制（改 common_value#5025 征收上限，可见即可证）
         UIButton *cfgTest = [UIButton buttonWithType:UIButtonTypeSystem];
-        cfgTest.frame = CGRectMake(14, 440, w - 28, 34);
+        cfgTest.frame = CGRectMake(14, 410, w - 28, 30);
         cfgTest.backgroundColor = [UIColor colorWithRed:0.62 green:0.32 blue:0.10 alpha:1];
         cfgTest.layer.cornerRadius = 8;
         [cfgTest setTitle:@"验证改表(征收上限→9999)" forState:UIControlStateNormal];
@@ -440,24 +430,12 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
 - (void)writeCfgSet:(NSString *)jsonTitle {
     NSString *p = doc_path(@"zqzz_flags.json");
     NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgSet\":%@}",
-        g_kill, g_inv, g_noad, g_spd, g_atkMul, jsonTitle];
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"noSuppress\":%d,\"cfgSet\":%@}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul, g_noSuppress, jsonTitle];
     [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
     mlog(@"cfgSet sent: %@", jsonTitle);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ sync_flags(); });
-}
-- (void)onKillMp {
-    [self writeCfgSet:@"{\"common_value#13#value\":999}"];
-    [self cfgTip:@"杀敌回能量 = 999\n\n主线战斗打死后，我方能量条应立即回满。"];
-}
-- (void)onHorseMp {
-    [self writeCfgSet:@"{\"common_value#59#value\":99999,\"common_value#61#value\":99999}"];
-    [self cfgTip:@"座驾能量 初始/上限 = 99999\n\n战斗内座驾技能能量条应为满（可连续放车技）。"];
-}
-- (void)onMorale {
-    [self writeCfgSet:@"{\"common_value#42#value\":9999}"];
-    [self cfgTip:@"士气上限 = 9999\n\n战斗内士气条上限变高（消耗战更持久）。"];
 }
 - (void)cfgTip:(NSString *)msg {
     UIAlertController *al = [UIAlertController alertControllerWithTitle:@"已写入"
@@ -467,11 +445,22 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     UIViewController *vc = g_win.rootViewController;
     if (vc) [vc presentViewController:al animated:YES completion:nil];
 }
-- (void)onCrit {
-    // 暴击率 = clamp(参数1*暴击/(暴击+防暴*参数2+参数3) + 参数4, 0, 0.8)
-    // 原 para="2,1,10,-1"（参数4=-1 把暴击率压到最低）→ 改 参数4=0.75 大幅提升
-    [self writeCfgSet:@"{\"common_value#384#para\":\"2,1,10,0.75\"}"];
-    [self cfgTip:@"暴击率公式参数4: -1 → 0.75\n\n公式=clamp(2*暴击/(暴击+防暴*1+10)-1, 0, 0.8)\n改后暴击率可接近上限 0.8\n\n进主线战斗看是否频繁暴击（红字大伤害）"];
+- (void)syncFlagsFull { sync_flags(); mlog(@"flags synced noSuppress=%d", g_noSuppress); }
+- (void)onNoLevel {
+    [self writeCfgSet:@"{\"common_value#10025#value\":0}"];
+    [self cfgTip:@"等级压制系数 MainStorylineLevel: 0.15 → 0\n\n原理（实证）：\n敌方属性系数 = 1 + (关卡压制等级-玩家等级)*0.15\n改 0 后【低等级打高关卡不再被压制】\n\n仅对主线(Common)生效，副本无效"];
+}
+- (void)onNoPower {
+    // 切换：写 flags noSuppress=0/1（默认 1=已解除）
+    g_noSuppress = g_noSuppress ? 0 : 1;
+    [self syncFlagsFull];
+    [self cfgTip:(g_noSuppress ? @"战力压制：已解除" : @"战力压制：已恢复")];
+}
+- (void)onFirstPay {
+    // 首充英雄：通过 ChangeNpcCfg 把指定关卡的老 NPC 换成强 NPC
+    // 格式 关卡id:老npcid:新npcid；这里用 1203 关卡做示例，具体 id 需按存档调整
+    [self writeCfgSet:@"{\"common_value#428#para\":\"1203:120318:120321\"}"];
+    [self cfgTip:@"首充英雄 ChangeNpcCfg = 1203:120318:120321\n\n作用（实证）：首充后在关卡 1203 把 NPC 120318 换成 120321\n⚠️ 需该关卡已解锁；具体关卡/NPC 可自定义\n请在 flags 里改 cfgSet 的 para 值"];
 }
 - (void)onCfgTest {
     // 改 common_value[5025].value = 9999（【新征收】最大累计时间 960 分钟 → 9999 分钟）
