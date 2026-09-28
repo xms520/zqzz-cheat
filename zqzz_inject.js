@@ -71,7 +71,7 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v18 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v19 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
@@ -671,7 +671,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v18 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v19 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
@@ -750,7 +750,7 @@
       names.push(k + "(" + n + ")");
     }
     S.cfgTables = names.length;
-    cfgWrite(CFG, "ver=v18 cfgTables=" + names.length + "\n" + names.join("\n"));
+    cfgWrite(CFG, "ver=v19 cfgTables=" + names.length + "\n" + names.join("\n"));
 
     var want = S.cfgDump;
     var done = "tables:" + names.length;
@@ -814,7 +814,7 @@
             names.push(k + "(" + n + ")");
           }
           S.cfgTables = names.length;
-          cfgWrite(CFG, "ver=v18 cfgTables=" + names.length + "\n" + names.join("\n"));
+          cfgWrite(CFG, "ver=v19 cfgTables=" + names.length + "\n" + names.join("\n"));
         } catch (e) {}
         return r;
       };
@@ -864,7 +864,56 @@
     }
     if (ok.length) { S.note = "cfgOK:" + ok.join(","); }
     if (bad.length) { S.note = "cfgBAD:" + bad.join(","); S.cfgApplied = {}; }
-    if (ok.length || bad.length) log("cfgSet ok=" + ok.join(",") + " bad=" + bad.join(","));
+    if (ok.length || bad.length) {
+      log("cfgSet ok=" + ok.join(",") + " bad=" + bad.join(","));
+      if (ok.length) refreshLiveSnapshots();
+    }
+  }
+
+  /* ★ 关键：部分参数在【构造函数里快照】到实例上（改表后不会自动生效）
+     实证：UnitGroup 构造函数
+       this.WarComm = { MoraleTopMax: getCommonCfgValue(...), MoraleReduceValue: ..., ... }
+     消费点是实例字段 this.WarComm.X ⇒ 必须在改表后【回填已存在的实例】。
+     MoraleTopMax 另可经 this.setMoraleMax(v) 刷新运行中的士气上限。 */
+  function refreshLiveSnapshots() {
+    try {
+      var CGm = req("CfgMgr");
+      var cfg = singleton(CGm, "CfgMgr");
+      if (!cfg) return;
+      var GV = function (id) {
+        var t = cfg.configData && cfg.configData.common_value;
+        var r = t && t[id];
+        return r ? r.value : undefined;
+      };
+      var UGm = req("UnitGroup");
+      var UG = ctor(UGm, "UnitGroup");
+      var BLm = req("BattleLogic");
+      var BL = ctor(BLm, "BattleLogic");
+      var inst = BL && BL.getInstance && BL.getInstance();
+      var groups = [];
+      if (inst) {
+        if (inst.atkGroup) groups.push(inst.atkGroup);
+        if (inst.defGroup) groups.push(inst.defGroup);
+      }
+      var n = 0;
+      for (var i = 0; i < groups.length; i++) {
+        var g = groups[i];
+        if (!g || !g.WarComm) continue;
+        var top = GV(42), red = GV(45), none = GV(47), adr = GV(46), mx = GV(44), mn = GV(43);
+        if (typeof top === "number") g.WarComm.MoraleTopMax = top;
+        if (typeof red === "number") g.WarComm.MoraleReduceValue = red;
+        if (typeof none === "number") g.WarComm.NoneMaxFrame = none;
+        if (typeof adr === "number") g.WarComm.MoraleAtkDefRate = adr;
+        if (typeof mx === "number") g.WarComm.MoraleMaxReduce = mx;
+        if (typeof mn === "number") g.WarComm.MoraleTopMin = mn;
+        /* 刷新运行中的士气上限（MoraleTopMax 的真正生效路径） */
+        if (typeof top === "number" && typeof g.setMoraleMax === "function") {
+          g.setMoraleMax(top);
+        }
+        n++;
+      }
+      if (n) { S.note += " refresh=" + n; log("snapshot refresh: " + n + " groups"); }
+    } catch (e) { S.note = "refresh-err:" + e; }
   }
 
   function tick() {
@@ -881,6 +930,10 @@
       hookCfg();
       checkDumpReq();
       applyCfgSet();
+      /* 改过表后：持续回填新创建的单位组（WarComm 是构造快照，新战斗需重新套用） */
+      if (S.cfgApplied && Object.keys(S.cfgApplied).length) {
+        if ((S.rfTick = (S.rfTick || 0) + 1) >= 4) { S.rfTick = 0; refreshLiveSnapshots(); }
+      }
       applySpeed();
       if (S.hp && S.unit) {
         if (S.inst !== 2) { S.inst = 2; log("hooks installed hp/unit" + (S.mad ? " +ad" : "")); }
