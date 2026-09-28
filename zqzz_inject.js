@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, lastDmg: "",
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -71,11 +71,12 @@
 
   function writeProbe() {
     var f = fs(); if (!f) return;
-    var t = "ver=v6 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
+    var t = "ver=v7 inst=" + S.inst + " kill=" + S.kill + " inv=" + S.inv + " noad=" + S.noad +
             " spd=" + S.spd + " cur=" + S.cur +
             " hp=" + S.hp + " unit=" + S.unit + " mad=" + S.mad + " sock=" + S.sock +
             " bu=" + S.bu + " aux=" + S.aux + " sch=" + S.sch + " rplHook=" + S.rplHook +
             " om=" + S.omHook + " ib2=" + S.ib2 + " ib3=" + S.ib3 +
+            " atkMul=" + S.atkMul + " kh2=" + S.kh2 +
             " kh=" + S.killHits + " ib=" + S.invBlocks +
             " sim=" + D.sim + " rpl=" + D.rpl + " mtype=" + D.mtype + " skip=" + D.skip +
             " proto=" + D.proto.length + " seen=" + S.seen + " note=" + S.note;
@@ -94,6 +95,9 @@
       /* spd = 目标倍率本身（1/2/3/5），未知值安全回退 1 */
       var v = Number(j.spd) || 1;
       S.spd = (SPD.indexOf(v) >= 0) ? v : 1;
+      /* atkMul = 攻击倍率（1=关；2/5/10/100 等），未知值安全回退 1 */
+      var am = Number(j.atkMul);
+      S.atkMul = (am > 1 && am <= 1000) ? am : 1;
     } catch (e) {}
   }
 
@@ -387,6 +391,7 @@
       var oSetHp = OM.prototype.setMonsterHp;
       OM.prototype.setMonsterHp = function (hp, atkId, force) {
         try {
+          /* ---- 无敌：我方血量拒绝下降 ---- */
           if (S.inv && this.isMyselfAtk) {
             S.ib2 = (S.ib2 || 0) + 1;
             this.isMonsterDead = false;
@@ -399,6 +404,20 @@
               try { this.updateBloodInfo(this.monsterHp, this.monstermp); } catch (x2) {}
             }
             return;
+          }
+          /* ---- 倍攻：敌方血量下降按倍率放大（血量差分法） ----
+             ⚠️ hp 是绝对值（服务端下发），不是伤害量；故用 本次扣血 = 旧值 - 新值 计算后放大。
+             首次调用（构造时 monsterHp === undefined）是初始化，不能放大。 */
+          if (S.atkMul > 1 && !this.isMyselfAtk) {
+            var prev = this.monsterHp;
+            if (typeof prev === "number" && prev > 0 && typeof hp === "number" && hp < prev) {
+              var dmg = prev - hp;
+              var big = dmg * S.atkMul;
+              S.kh2 = (S.kh2 || 0) + 1;
+              var nh = prev - big;
+              S.lastDmg = dmg + "x" + S.atkMul + "->" + big;
+              hp = nh < 0 ? 0 : nh;
+            }
           }
         } catch (x) {}
         return oSetHp.call(this, hp, atkId, force);
@@ -598,7 +617,7 @@
           D.proto.push(id);
           if (D.proto.length > 64) D.proto.shift();
           var f = fs();
-          if (f) f.writeStringToFile("ver=v6 protocols: " + D.proto.join(","), PROTO);
+          if (f) f.writeStringToFile("ver=v7 protocols: " + D.proto.join(","), PROTO);
         }
       } catch (e) {}
       return oR.apply(this, arguments);
