@@ -199,11 +199,48 @@ static BOOL build_injected_main(void) {
 #pragma mark - 开关 + flags 同步
 
 static int g_kill = 0, g_inv = 0, g_noad = 0, g_spd = 1, g_atkMul = 1, g_noSuppress = 1;
+static int g_cfgIdle = 0, g_cfgHorse = 0, g_cfgMorale = 0;
+
+static void cfg_set_json(char *out, size_t n) {
+    char buf[512]; buf[0] = 0;
+    if (g_cfgIdle)   strncat(buf, "\"common_value#5025#value\":9999", sizeof(buf)-strlen(buf)-1);
+    if (g_cfgHorse) {
+        if (buf[0]) strncat(buf, ",", sizeof(buf)-strlen(buf)-1);
+        strncat(buf, "\"common_value#59#value\":99999,\"common_value#61#value\":99999", sizeof(buf)-strlen(buf)-1);
+    }
+    if (g_cfgMorale) {
+        if (buf[0]) strncat(buf, ",", sizeof(buf)-strlen(buf)-1);
+        strncat(buf, "\"common_value#42#value\":9999", sizeof(buf)-strlen(buf)-1);
+    }
+    snprintf(out, n, "{%s}", buf);
+}
+
+/* 记录已关闭、需要还原的参数路径（一次性发送） */
+static char g_restoreJson[512] = "";
+
+static void restore_add(const char *paths) {
+    /* paths: "表#id#字段,表#id#字段" → {"表#id#字段":1,...} */
+    if (g_restoreJson[0]) return;
+    char tmp[512]; snprintf(tmp, sizeof(tmp), "%s", paths);
+    char *save = NULL, *tok = strtok_r(tmp, ",", &save);
+    char buf[480]; buf[0] = 0;
+    while (tok) {
+        if (buf[0]) strncat(buf, ",", sizeof(buf)-strlen(buf)-1);
+        strncat(buf, "\"", sizeof(buf)-strlen(buf)-1);
+        strncat(buf, tok, sizeof(buf)-strlen(buf)-1);
+        strncat(buf, "\":1", sizeof(buf)-strlen(buf)-1);
+        tok = strtok_r(NULL, ",", &save);
+    }
+    snprintf(g_restoreJson, sizeof(g_restoreJson), "{%s}", buf);
+}
 
 static void sync_flags(void) {
+    char cfgJson[576]; cfg_set_json(cfgJson, sizeof(cfgJson));
     NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"noSuppress\":%d}",
-        g_kill, g_inv, g_noad, g_spd, g_atkMul, g_noSuppress];
+        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"noSuppress\":%d,\"cfgSet\":%s,\"cfgRestore\":%s}",
+        g_kill, g_inv, g_noad, g_spd, g_atkMul, g_noSuppress, cfgJson,
+        (g_restoreJson[0] ? g_restoreJson : "null")];
+    g_restoreJson[0] = 0;
     NSString *p = doc_path(@"zqzz_flags.json");
     NSError *e = nil;
     [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:&e];
@@ -238,7 +275,8 @@ static UIWindow *g_win = nil;
 static UIView   *g_ball = nil;
 static UIView   *g_panel = nil;
 static UILabel  *g_status = nil;
-static UISwitch *g_swKill = nil, *g_swInv = nil, *g_swNoad = nil;
+static UISwitch *g_swKill = nil, *g_swInv = nil, *g_swNoad = nil, *g_swAtk = nil;
+static UIButton *g_btnIdle = nil, *g_btnHorse = nil, *g_btnMorale = nil;
 static UISegmentedControl *g_segSpd = nil;
 static UISegmentedControl *g_segAtk = nil;
 static CGPoint   g_ballPos;
@@ -269,139 +307,118 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (!g_win) return;
     if (!g_panel) {
         CGRect f = g_win.bounds;
-        CGFloat w = 268, h = 468;
+        CGFloat w = 272, h = 400;
         CGFloat x = MAX(8, MIN(f.size.width - w - 8, g_ballPos.x - w + 29));
         CGFloat y = MAX(60, MIN(f.size.height - h - 40, g_ballPos.y + 34));
         g_panel = [[UIView alloc] initWithFrame:CGRectMake(x, y, w, h)];
-        g_panel.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.94];
+        g_panel.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.95];
         g_panel.layer.cornerRadius = 14;
         g_panel.layer.borderWidth = 1;
         g_panel.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.14].CGColor;
 
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(14, 10, 200, 24)];
+        // 标题
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(14, 9, 200, 24)];
         title.text = @"昆哥儿科技";
         title.textColor = [UIColor colorWithRed:1 green:0.78 blue:0.24 alpha:1];
         title.font = [UIFont boldSystemFontOfSize:16];
         [g_panel addSubview:title];
 
         UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
-        close.frame = CGRectMake(w - 44, 6, 38, 32);
+        close.frame = CGRectMake(w - 42, 5, 36, 30);
         [close setTitle:@"✕" forState:UIControlStateNormal];
         [close setTitleColor:[UIColor colorWithWhite:0.7 alpha:1] forState:UIControlStateNormal];
         close.titleLabel.font = [UIFont systemFontOfSize:18];
         [close addTarget:self action:@selector(closePanel) forControlEvents:UIControlEventTouchUpInside];
         [g_panel addSubview:close];
 
-        const CGFloat rows[3] = {48, 90, 132};
-        NSArray *names = @[@"秒杀（一击必杀）", @"无敌（我方免伤）", @"免广告（直接领奖）"];
-        __strong UISwitch **sws[3] = {&g_swKill, &g_swInv, &g_swNoad};
-        SEL sels[3] = {@selector(onKill), @selector(onInv), @selector(onNoad)};
-        for (int i = 0; i < 3; i++) {
-            UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(14, rows[i], 190, 30)];
+        // ---- 4 个开关（2×2 网格）----
+        NSArray *names = @[@"秒杀", @"无敌", @"免广告", @"倍攻"];
+        __strong UISwitch **sws[4] = {&g_swKill, &g_swInv, &g_swNoad, &g_swAtk};
+        SEL sels[4] = {@selector(onKill), @selector(onInv), @selector(onNoad), @selector(onAtkSw)};
+        CGFloat colW = (w - 28) / 2;
+        for (int i = 0; i < 4; i++) {
+            CGFloat cx = 14 + (i % 2) * (colW + 4);
+            CGFloat cy = 38 + (i / 2) * 36;
+            UILabel *l = [[UILabel alloc] initWithFrame:CGRectMake(cx, cy + 3, colW - 58, 24)];
             l.text = names[i];
             l.textColor = [UIColor colorWithWhite:0.94 alpha:1];
-            l.font = [UIFont systemFontOfSize:14];
+            l.font = [UIFont systemFontOfSize:13];
             [g_panel addSubview:l];
-            UISwitch *s = [[UISwitch alloc] initWithFrame:CGRectMake(w - 66, rows[i] + 1, 51, 31)];
-            s.onTintColor = [UIColor colorWithRed:0.15 green:0.8 blue:0.42 alpha:1];
-            *sws[i] = s;
-            [s addTarget:self action:sels[i] forControlEvents:UIControlEventValueChanged];
-            [g_panel addSubview:s];
+            UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(cx + colW - 54, cy, 51, 31)];
+            sw.onTintColor = [UIColor colorWithRed:0.15 green:0.8 blue:0.42 alpha:1];
+            sw.transform = CGAffineTransformMakeScale(0.86, 0.86);
+            *sws[i] = sw;
+            [sw addTarget:self action:sels[i] forControlEvents:UIControlEventValueChanged];
+            [g_panel addSubview:sw];
         }
-        g_status = [[UILabel alloc] initWithFrame:CGRectMake(14, 294, w - 28, 56)];
-        g_status.numberOfLines = 4;
-        g_status.font = [UIFont systemFontOfSize:10];
-        g_status.textColor = [UIColor colorWithWhite:0.65 alpha:1];
-        [g_panel addSubview:g_status];
 
-        // 全局变速档位（引擎 Scheduler timeScale）
-        UILabel *spdL = [[UILabel alloc] initWithFrame:CGRectMake(14, 174, 74, 26)];
-        spdL.text = @"全局变速";
+        // ---- 全局变速 ----
+        UILabel *spdL = [[UILabel alloc] initWithFrame:CGRectMake(14, 116, 62, 24)];
+        spdL.text = @"变速";
         spdL.textColor = [UIColor colorWithWhite:0.94 alpha:1];
-        spdL.font = [UIFont systemFontOfSize:14];
+        spdL.font = [UIFont systemFontOfSize:13];
         [g_panel addSubview:spdL];
-
         g_segSpd = [[UISegmentedControl alloc] initWithItems:@[@"关", @"2x", @"3x", @"5x"]];
-        g_segSpd.frame = CGRectMake(92, 174, w - 106, 28);
+        g_segSpd.frame = CGRectMake(78, 114, w - 92, 28);
         g_segSpd.selectedSegmentIndex = 0;
         if (@available(iOS 13.0, *)) g_segSpd.selectedSegmentTintColor = [UIColor colorWithRed:0.20 green:0.52 blue:0.95 alpha:1];
         g_segSpd.tintColor = [UIColor colorWithWhite:1 alpha:0.25];
         [g_segSpd addTarget:self action:@selector(onSpd) forControlEvents:UIControlEventValueChanged];
         [g_panel addSubview:g_segSpd];
 
-        // 倍攻（血量差分放大，主线/副本通用）
-        UILabel *atkL = [[UILabel alloc] initWithFrame:CGRectMake(14, 210, 74, 26)];
-        atkL.text = @"倍攻";
+        // ---- 倍攻倍率 ----
+        UILabel *atkL = [[UILabel alloc] initWithFrame:CGRectMake(14, 152, 62, 24)];
+        atkL.text = @"倍攻值";
         atkL.textColor = [UIColor colorWithWhite:0.94 alpha:1];
-        atkL.font = [UIFont systemFontOfSize:14];
+        atkL.font = [UIFont systemFontOfSize:13];
         [g_panel addSubview:atkL];
-
-        g_segAtk = [[UISegmentedControl alloc] initWithItems:@[@"关", @"2x", @"5x", @"10x", @"100x"]];
-        g_segAtk.frame = CGRectMake(92, 210, w - 106, 28);
-        g_segAtk.selectedSegmentIndex = 0;
+        g_segAtk = [[UISegmentedControl alloc] initWithItems:@[@"2x", @"5x", @"10x", @"100x"]];
+        g_segAtk.frame = CGRectMake(78, 150, w - 92, 28);
+        g_segAtk.selectedSegmentIndex = 1;
         if (@available(iOS 13.0, *)) g_segAtk.selectedSegmentTintColor = [UIColor colorWithRed:0.85 green:0.30 blue:0.20 alpha:1];
         g_segAtk.tintColor = [UIColor colorWithWhite:1 alpha:0.25];
         [g_segAtk addTarget:self action:@selector(onAtk) forControlEvents:UIControlEventValueChanged];
         [g_panel addSubview:g_segAtk];
 
-        // 导出配置表（把全部策划数值表 dump 到 Documents/zqzz_cfg.txt）
-        UIButton *cfgBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        cfgBtn.frame = CGRectMake(14, 248, w - 28, 36);
-        cfgBtn.backgroundColor = [UIColor colorWithRed:0.18 green:0.45 blue:0.78 alpha:1];
-        cfgBtn.layer.cornerRadius = 9;
-        [cfgBtn setTitle:@"导出关键配置表(JSON)" forState:UIControlStateNormal];
-        [cfgBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        cfgBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [cfgBtn addTarget:self action:@selector(onDumpCfg) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:cfgBtn];
+        // ---- 配置类功能（3 个开关）----
+        UIButton *cfgHead = [UIButton buttonWithType:UIButtonTypeSystem];
+        cfgHead.frame = CGRectMake(14, 186, w - 28, 20);
+        [cfgHead setTitle:@"— 配置功能（点开启，再点关闭）—" forState:UIControlStateNormal];
+        [cfgHead setTitleColor:[UIColor colorWithWhite:0.55 alpha:1] forState:UIControlStateNormal];
+        cfgHead.titleLabel.font = [UIFont systemFontOfSize:10];
+        cfgHead.userInteractionEnabled = NO;
+        [g_panel addSubview:cfgHead];
 
-        // ---- 核心功能：压制解除 + 首充 ----
-        UIButton *c1 = [UIButton buttonWithType:UIButtonTypeSystem];
-        c1.frame = CGRectMake(14, 288, w - 28, 34);
-        c1.backgroundColor = [UIColor colorWithRed:0.72 green:0.18 blue:0.14 alpha:1];
-        c1.layer.cornerRadius = 8;
-        [c1 setTitle:@"解除等级压制 (MainStorylineLevel→0)" forState:UIControlStateNormal];
-        [c1 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        c1.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [c1 addTarget:self action:@selector(onNoLevel) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:c1];
+        NSArray *cnames = @[@"征收(累计时间→9999)", @"座驾(能量→99999)", @"士气(上限→9999)"];
+        SEL csels[3] = {@selector(onCfgIdle), @selector(onCfgHorse), @selector(onCfgMorale)};
+        __strong UIButton **cbtns[3] = {&g_btnIdle, &g_btnHorse, &g_btnMorale};
+        for (int i = 0; i < 3; i++) {
+            UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+            b.frame = CGRectMake(14, 210 + i * 36, w - 28, 32);
+            b.backgroundColor = [UIColor colorWithRed:0.20 green:0.22 blue:0.28 alpha:1];
+            b.layer.cornerRadius = 8;
+            [b setTitle:cnames[i] forState:UIControlStateNormal];
+            [b setTitleColor:[UIColor colorWithWhite:0.92 alpha:1] forState:UIControlStateNormal];
+            b.titleLabel.font = [UIFont boldSystemFontOfSize:12];
+            b.tag = i;
+            [b addTarget:self action:csels[i] forControlEvents:UIControlEventTouchUpInside];
+            *cbtns[i] = b;
+            [g_panel addSubview:b];
+        }
 
-        UIButton *c2 = [UIButton buttonWithType:UIButtonTypeSystem];
-        c2.frame = CGRectMake(14, 326, w - 28, 34);
-        c2.backgroundColor = [UIColor colorWithRed:0.72 green:0.18 blue:0.14 alpha:1];
-        c2.layer.cornerRadius = 8;
-        [c2 setTitle:@"解除战力压制 (getCombatCheckSkills)" forState:UIControlStateNormal];
-        [c2 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        c2.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [c2 addTarget:self action:@selector(onNoPower) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:c2];
-
-        UIButton *c3 = [UIButton buttonWithType:UIButtonTypeSystem];
-        c3.frame = CGRectMake(14, 364, w - 28, 34);
-        c3.backgroundColor = [UIColor colorWithRed:0.65 green:0.40 blue:0.10 alpha:1];
-        c3.layer.cornerRadius = 8;
-        [c3 setTitle:@"首充英雄(ChangeNpcCfg 换强NPC)" forState:UIControlStateNormal];
-        [c3 setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        c3.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-        [c3 addTarget:self action:@selector(onFirstPay) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:c3];
-
-        // 验证改表机制（改 common_value#5025 征收上限，可见即可证）
-        UIButton *cfgTest = [UIButton buttonWithType:UIButtonTypeSystem];
-        cfgTest.frame = CGRectMake(14, 410, w - 28, 30);
-        cfgTest.backgroundColor = [UIColor colorWithRed:0.62 green:0.32 blue:0.10 alpha:1];
-        cfgTest.layer.cornerRadius = 8;
-        [cfgTest setTitle:@"验证改表(征收上限→9999)" forState:UIControlStateNormal];
-        [cfgTest setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        cfgTest.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-        [cfgTest addTarget:self action:@selector(onCfgTest) forControlEvents:UIControlEventTouchUpInside];
-        [g_panel addSubview:cfgTest];
+        // ---- 状态栏 ----
+        g_status = [[UILabel alloc] initWithFrame:CGRectMake(14, 320, w - 28, 68)];
+        g_status.numberOfLines = 5;
+        g_status.font = [UIFont systemFontOfSize:9.5];
+        g_status.textColor = [UIColor colorWithWhite:0.62 alpha:1];
+        [g_panel addSubview:g_status];
 
         UIPanGestureRecognizer *pp = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panelPan:)];
         [g_panel addGestureRecognizer:pp];
     }
     [self refreshSwitches];
     [self refreshStatus];
+    [self refreshCfgButtons];
     [g_win addSubview:g_panel];
     [g_win bringSubviewToFront:g_panel];
 }
@@ -429,6 +446,7 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
 }
 - (void)writeCfgSet:(NSString *)jsonTitle {
     NSString *p = doc_path(@"zqzz_flags.json");
+    char cfgJson[576]; cfg_set_json(cfgJson, sizeof(cfgJson));
     NSString *json = [NSString stringWithFormat:
         @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"noSuppress\":%d,\"cfgSet\":%@}",
         g_kill, g_inv, g_noad, g_spd, g_atkMul, g_noSuppress, jsonTitle];
@@ -446,66 +464,47 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     if (vc) [vc presentViewController:al animated:YES completion:nil];
 }
 - (void)syncFlagsFull { sync_flags(); mlog(@"flags synced noSuppress=%d", g_noSuppress); }
-- (void)onNoLevel {
-    [self writeCfgSet:@"{\"common_value#10025#value\":0}"];
-    [self cfgTip:@"等级压制系数 MainStorylineLevel: 0.15 → 0\n\n原理（实证）：\n敌方属性系数 = 1 + (关卡压制等级-玩家等级)*0.15\n改 0 后【低等级打高关卡不再被压制】\n\n仅对主线(Common)生效，副本无效"];
+- (void)onCfgIdle {
+    g_cfgIdle = !g_cfgIdle;
+    if (!g_cfgIdle) restore_add("common_value#5025#value");
+    sync_flags(); [self refreshCfgButtons]; mlog(@"cfgIdle=%d", g_cfgIdle);
 }
-- (void)onNoPower {
-    // 切换：写 flags noSuppress=0/1（默认 1=已解除）
-    g_noSuppress = g_noSuppress ? 0 : 1;
-    [self syncFlagsFull];
-    [self cfgTip:(g_noSuppress ? @"战力压制：已解除" : @"战力压制：已恢复")];
+- (void)onCfgHorse {
+    g_cfgHorse = !g_cfgHorse;
+    if (!g_cfgHorse) restore_add("common_value#59#value,common_value#61#value");
+    sync_flags(); [self refreshCfgButtons]; mlog(@"cfgHorse=%d", g_cfgHorse);
 }
-- (void)onFirstPay {
-    // 首充英雄：通过 ChangeNpcCfg 把指定关卡的老 NPC 换成强 NPC
-    // 格式 关卡id:老npcid:新npcid；这里用 1203 关卡做示例，具体 id 需按存档调整
-    [self writeCfgSet:@"{\"common_value#428#para\":\"1203:120318:120321\"}"];
-    [self cfgTip:@"首充英雄 ChangeNpcCfg = 1203:120318:120321\n\n作用（实证）：首充后在关卡 1203 把 NPC 120318 换成 120321\n⚠️ 需该关卡已解锁；具体关卡/NPC 可自定义\n请在 flags 里改 cfgSet 的 para 值"];
+- (void)onCfgMorale {
+    g_cfgMorale = !g_cfgMorale;
+    if (!g_cfgMorale) restore_add("common_value#42#value");
+    sync_flags(); [self refreshCfgButtons]; mlog(@"cfgMorale=%d", g_cfgMorale);
 }
-- (void)onCfgTest {
-    // 改 common_value[5025].value = 9999（【新征收】最大累计时间 960 分钟 → 9999 分钟）
-    NSString *p = doc_path(@"zqzz_flags.json");
-    NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgSet\":{\"common_value#5025#value\":9999}}",
-        g_kill, g_inv, g_noad, g_spd, g_atkMul];
-    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    mlog(@"cfgSet 5025 sent");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ sync_flags(); });
-    UIAlertController *al = [UIAlertController alertControllerWithTitle:@"验证改表"
-        message:@"已写入 cfgSet: common_value#5025#value = 9999\n\n请打开【征收】界面查看：\n「最大累计时间」应从 16 小时变为 166 小时\n\n查看 Documents/zqzz_js_probe.txt 的 note 字段：\n• cfgOK:... 改表成功\n• cfgBAD:... 失败（会附原因）"
-        preferredStyle:UIAlertControllerStyleAlert];
-    [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-    UIViewController *vc = g_win.rootViewController;
-    if (vc) [vc presentViewController:al animated:YES completion:nil];
+- (void)refreshCfgButtons {
+    UIButton *bs[3] = {g_btnIdle, g_btnHorse, g_btnMorale};
+    int on[3] = {g_cfgIdle, g_cfgHorse, g_cfgMorale};
+    for (int i = 0; i < 3; i++) {
+        UIButton *b = bs[i];
+        if (!b) continue;
+        b.backgroundColor = on[i]
+            ? [UIColor colorWithRed:0.13 green:0.55 blue:0.33 alpha:1]
+            : [UIColor colorWithRed:0.20 green:0.22 blue:0.28 alpha:1];
+        NSString *base = @[@"征收(累计时间→9999)", @"座驾(能量→99999)", @"士气(上限→9999)"][i];
+        [b setTitle:(on[i] ? [base stringByAppendingString:@"  ✓"] : base) forState:UIControlStateNormal];
+    }
 }
-- (void)onDumpCfg {
-    // 一键导出【关键表】到 Documents/zqzz_cfg_key.json（合并单文件，便于回传）
-    NSString *p = doc_path(@"zqzz_flags.json");
-    NSString *json = [NSString stringWithFormat:
-        @"{\"kill\":%d,\"inv\":%d,\"noad\":%d,\"spd\":%d,\"atkMul\":%d,\"cfgDump\":\"auto\"}",
-        g_kill, g_inv, g_noad, g_spd, g_atkMul];
-    [json writeToFile:p atomically:YES encoding:NSUTF8StringEncoding error:NULL];
-    mlog(@"cfgDump=auto sent");
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ sync_flags(); });
-    UIAlertController *al = [UIAlertController alertControllerWithTitle:@"导出配置表"
-        message:@"已写入 Documents/zqzz_cfg_key.json\n（若显示等待中，请先登录进游戏再点）\n\n进阶用法（改 zqzz_flags.json）：\n• \"cfgDump\": \"all\" 导出全部924表\n• \"cfgDump\": \"mission,npc_tank\" 指定表\n• \"cfgFind\": \"atk\" 关键词搜字段\n• \"cfgSet\": {\"ad_reward#1#max_count\":999} 改值"
-        preferredStyle:UIAlertControllerStyleAlert];
-    [al addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
-    UIViewController *vc = g_win.rootViewController;
-    if (vc) [vc presentViewController:al animated:YES completion:nil];
-}
+- (void)onAtkSw { g_atkMul = g_swAtk.isOn ? (g_segAtk.selectedSegmentIndex >= 0 ? kAtkVals[g_segAtk.selectedSegmentIndex] : 5) : 1; if (!g_swAtk.isOn) g_segAtk.selectedSegmentIndex = 0; sync_flags(); mlog(@"atkMul=%d (switch)", g_atkMul); }
 - (void)onAtk {
     NSInteger i = g_segAtk.selectedSegmentIndex;
     if (i < 0) i = 0;
     if (i > 4) i = 4;
     g_atkMul = kAtkVals[i];
+    g_swAtk.on = YES;
     sync_flags();
     mlog(@"atkMul=%d", g_atkMul);
 }
 - (void)refreshSwitches {
     g_swKill.on = g_kill; g_swInv.on = g_inv; g_swNoad.on = g_noad;
+    g_swAtk.on = (g_atkMul > 1);
     NSInteger idx = 0;
     for (int i = 0; i < 4; i++) if (kSpdVals[i] == g_spd) idx = i;
     g_segSpd.selectedSegmentIndex = idx;
@@ -514,37 +513,40 @@ static const int kAtkVals[5] = {1, 2, 5, 10, 100};  // 攻击倍率档位（1=�
     g_segAtk.selectedSegmentIndex = ai;
 }
 - (void)refreshStatus {
-    // 状态栏全中文：把 JS 探针的关键字段解析后转汉字显示
     NSString *probe = read_js_probe();
-    NSString *js = @"未就绪";
+    NSString *line2 = @"等待游戏数据…";
     if ([probe length] > 0) {
-        NSDictionary *map = @{@"hp":@"血量挂点", @"unit":@"单位挂点", @"mad":@"广告挂点",
-                              @"sch":@"变速可用", @"kill":@"秒杀", @"inv":@"无敌"};
+        NSArray *pairs = @[@[@"hp=1", @"血量"], @[@"unit=1", @"单位"], @[@"mad=1", @"广告"],
+                           @[@"sch=1", @"变速"], @[@"sup=", @"压制"], @[@"cfgT=", @"配置表"]];
         NSMutableArray *on = [NSMutableArray array];
-        for (NSString *k in map) {
-            NSString *pat = [NSString stringWithFormat:@"%@=1", k];
-            if ([probe rangeOfString:pat].location != NSNotFound) [on addObject:map[k]];
+        for (NSArray *p in pairs) {
+            NSRange r = [probe rangeOfString:p[0]];
+            if (r.location != NSNotFound) [on addObject:p[1]];
         }
-        js = [on count] ? [on componentsJoinedByString:@"·"] : @"挂点未生效";
-        NSRange r = [probe rangeOfString:@"ver="];
-        if (r.location != NSNotFound) {
-            NSString *v = [probe substringFromIndex:r.location];
-            NSRange sp = [v rangeOfString:@" "];
-            if (sp.location != NSNotFound) v = [v substringToIndex:sp.location];
-            js = [NSString stringWithFormat:@"%@ | %@", v, js];
+        line2 = [on count] ? [NSString stringWithFormat:@"挂点: %@", [on componentsJoinedByString:@"·"]] : @"挂点未生效";
+        NSRange kr = [probe rangeOfString:@"kill="];
+        if (kr.location != NSNotFound) {
+            NSString *kv = [probe substringFromIndex:kr.location + 5];
+            NSRange sp = [kv rangeOfString:@" "];
+            if (sp.location != NSNotFound) kv = [kv substringToIndex:sp.location];
+            line2 = [NSString stringWithFormat:@"%@ | 秒杀计数%@", line2, kv];
         }
     }
-    NSString *sw = [NSString stringWithFormat:@"秒杀%@ 无敌%@ 免广告%@",
-                    g_kill ? @"开" : @"关", g_inv ? @"开" : @"关", g_noad ? @"开" : @"关"];
-    NSString *sp = (g_spd > 1) ? [NSString stringWithFormat:@"%d倍速", g_spd] : @"原速";
-    NSString *ak = (g_atkMul > 1) ? [NSString stringWithFormat:@"%d倍攻", g_atkMul] : @"原攻";
-    NSString *cfg = @"";
-    NSRange cr = [probe rangeOfString:@"note=cfgOK:"];
-    if (cr.location != NSNotFound) cfg = @"\n改表:成功";
-    NSRange cr2 = [probe rangeOfString:@"note=cfgBAD:"];
-    if (cr2.location != NSNotFound) cfg = @"\n改表:失败";
-    g_status.text = [NSString stringWithFormat:@"%@ · %@ · %@%@\n%@", sw, sp, ak, cfg, js];
+    NSString *l1 = [NSString stringWithFormat:@"秒杀%@ 无敌%@ 免广告%@ 倍攻%@",
+                    g_kill ? @"开" : @"关", g_inv ? @"开" : @"关",
+                    g_noad ? @"开" : @"关",
+                    g_atkMul > 1 ? [NSString stringWithFormat:@"%dx", g_atkMul] : @"关"];
+    NSString *l3 = [NSString stringWithFormat:@"变速%@ | 征收%@ 座驾%@ 士气%@",
+                    g_spd > 1 ? [NSString stringWithFormat:@"%dx", g_spd] : @"关",
+                    g_cfgIdle ? @"开" : @"关", g_cfgHorse ? @"开" : @"关", g_cfgMorale ? @"开" : @"关"];
+    /* 改表结果 */
+    NSString *l4 = @"";
+    if ([probe rangeOfString:@"note=cfgOK:"].location != NSNotFound) l4 = @"配置写入: 成功";
+    else if ([probe rangeOfString:@"note=cfgBAD:"].location != NSNotFound) l4 = @"配置写入: 失败";
+    else if ([probe rangeOfString:@"note=cfg:"].location != NSNotFound) l4 = @"配置写入: 成功";
+    g_status.text = [NSString stringWithFormat:@"%@\n%@\n%@\n%@", l1, l3, line2, l4];
 }
+
 @end
 
 static ZQHelper *g_helper = nil;   // ⚠️ 必须实例化，nil target 会静默吞掉 UIControl 事件
