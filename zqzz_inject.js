@@ -48,7 +48,7 @@
   var SPD = [1, 2, 3, 5];   // 可选倍率（1=关）；S.spd 保存目标倍率本身
   var S = window.__ZQZZ__ = {
     kill: 0, inv: 0, noad: 0, spd: 1, cur: 1, inst: 0,
-    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", dumpSig: "", noSuppress: 1, supBlk: 0, hpMine: 0, hpFoe: 0,
+    writable: "", hp: 0, unit: 0, mad: 0, sock: 0, bu: 0, aux: 0, sch: 0, rplHook: 0, omHook: 0, ib2: 0, ib3: 0, atkMul: 1, kh2: 0, killHits2: 0, lastDmg: "", hpCalls: 0, onlyMain: 1, battleType: -1, cfgTables: 0, cfgDump: "", cfgSet: null, cfgFind: "", cfgFindTables: "", cfgKey: "", dumpSig: "", noSuppress: 1, supBlk: 0, cfgRestore: null, hpMine: 0, hpFoe: 0,
     killHits: 0, invBlocks: 0, seen: "", note: "boot", log: ""
   };
 
@@ -106,6 +106,7 @@
       /* 配置表：cfgDump=1 打表名清单；cfgDump="表A,表B" 打指定表内容；cfgSet={...} 改值 */
       if (typeof j.cfgDump !== "undefined") S.cfgDump = j.cfgDump;
       if (j.cfgSet && typeof j.cfgSet === "object") S.cfgSet = j.cfgSet;
+      if (j.cfgRestore && typeof j.cfgRestore === "object") S.cfgRestore = j.cfgRestore;
       if (typeof j.cfgFind !== "undefined") S.cfgFind = j.cfgFind;
       if (typeof j.cfgFindTables !== "undefined") S.cfgFindTables = j.cfgFindTables;
     } catch (e) {}
@@ -825,6 +826,36 @@
     }
   }
 
+  /* 还原改表（把路径还原为 configInitData 里的初始值） */
+  function applyCfgRestore() {
+    var rs = S.cfgRestore;
+    if (!rs || typeof rs !== "object") return;
+    var CGm = req("CfgMgr");
+    var inst = singleton(CGm, "CfgMgr");
+    if (!inst || !inst.configData) return;
+    var done = [];
+    for (var path in rs) {
+      var parts = path.split("#");
+      try {
+        var ib = inst.configInitData && inst.configInitData[parts[0]];
+        var row = ib && ib[parts[1]];
+        if (!row) continue;
+        var orig = row[parts[2]];
+        var tbl = inst.configData[parts[0]];
+        if (tbl && tbl[parts[1]]) {
+          tbl[parts[1]][parts[2]] = orig;
+          done.push(path);
+        }
+      } catch (e) {}
+    }
+    if (done.length) {
+      S.note = "cfgRestore:" + done.join(",");
+      S.cfgApplied = {};
+      log("cfgRestore " + done.join(","));
+    }
+    S.cfgRestore = null;
+  }
+
   /* 运行时改表（在 addJsonConfig 之后、进入游戏后生效） */
   function applyCfgSet() {
     var set = S.cfgSet;
@@ -979,6 +1010,7 @@
       hookSuppress();
       hookCfg();
       checkDumpReq();
+      applyCfgRestore();
       applyCfgSet();
       /* 只要配过 cfgSet 就持续回填（WarComm 是构造快照：已存在实例需回填，
          新战斗会在构造时读新值——两者都要保证） */
